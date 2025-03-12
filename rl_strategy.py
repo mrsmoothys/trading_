@@ -152,8 +152,22 @@ class TradingEnv(gym.Env):
         # Map action index to actual action
         action = self.actions[action_idx]
         
-        # Get current price
-        current_price = self.df.iloc[self.current_step]['close']
+            # Retrieve the 'close' price for the current step
+        value = self.df.iloc[self.current_step]['close']
+
+        if isinstance(value, (pd.Series, np.ndarray)):
+            # If the value contains multiple elements, take the first one
+            if value.size != 1:
+                # For a pandas Series, use .iloc[0]; for a NumPy array, use [0]
+                if isinstance(value, pd.Series):
+                    current_price = float(value.iloc[0])
+                else:
+                    current_price = float(value[0])
+            else:
+                current_price = float(value.item())
+        else:
+            current_price = float(value)
+    
         
         # Calculate action-dependent reward and execute trades
         reward = 0
@@ -349,6 +363,9 @@ class DQNAgent:
             Keras model
         """
         if self.enable_dueling_dqn:
+            # Import at the top of the file or function
+            from tensorflow.keras.layers import Lambda
+            import tensorflow.keras.backend as K
             # Dueling DQN architecture
             inputs = Input(shape=(self.state_dim,))
             
@@ -368,8 +385,14 @@ class DQNAgent:
             advantage_stream = Dense(32, activation='relu')(x)
             advantage_stream = Dense(self.action_dim)(advantage_stream)
             
-            # Combine streams
-            outputs = value_stream + (advantage_stream - tf.reduce_mean(advantage_stream, axis=1, keepdims=True))
+            # FIXED VERSION - Using Lambda layers:
+            # Calculate mean of advantage stream using K.mean (Keras backend)
+            advantage_mean = Lambda(lambda x: K.mean(x, axis=1, keepdims=True))(advantage_stream)
+            
+            # Combine streams using Lambda layer
+            outputs = Lambda(lambda inputs: inputs[0] + inputs[1] - inputs[2])([
+                value_stream, advantage_stream, advantage_mean
+            ])
             
             model = Model(inputs=inputs, outputs=outputs)
         else:
@@ -596,6 +619,9 @@ class RLTradingStrategy(TradingStrategy):
             trailing_stop=trailing_stop
         )
         
+        # Initialize the logger
+        self.logger = logging.getLogger("rl_strategy")
+
         self.lookback_window = lookback_window
         self.train_mode = train_mode
         
@@ -689,6 +715,10 @@ class RLTradingStrategy(TradingStrategy):
         
         # Training history
         self.training_history = []
+
+        # Add this safety check to ensure logger is initialized
+        if not hasattr(self, 'logger'):
+            self.logger = logging.getLogger("rl_strategy")
         
         self.logger.info(f"Starting RL training for {self.symbol} {self.timeframe} with {episodes} episodes")
         
