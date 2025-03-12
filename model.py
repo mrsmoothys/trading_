@@ -115,7 +115,7 @@ class DeepLearningModel:
         model.add(GRU(
             self.hidden_layers[0],
             input_shape=self.input_shape,
-            return_sequences=len(self.hidden_layers) > 1,
+            return_sequences=False,  # Force this to False for now
             activation='tanh',
             recurrent_activation='sigmoid'
         ))
