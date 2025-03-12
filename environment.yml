@@ -1,0 +1,29 @@
+name: rsidtrade
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.10
+  - pip>=23.0.0
+  - numpy>=1.23.0
+  - pandas>=2.0.0
+  - matplotlib>=3.6.0
+  - seaborn>=0.12.0
+  - scikit-learn>=1.2.0
+  - statsmodels>=0.13.5
+  - tensorflow-macos>=2.12.0  # Optimized for M1 Mac
+  - tensorflow-metal>=0.8.0   # Metal acceleration support for M1 Mac
+  - ta-lib>=0.4.24            # Technical analysis library
+  - optuna>=3.1.0             # Hyperparameter optimization
+  - jupyterlab>=3.6.0         # For interactive analysis
+  - ipywidgets>=8.0.0         # For interactive widgets
+  - mlflow>=2.3.0             # For experiment tracking
+  - pytest>=7.3.0             # For testing
+  - pylint>=2.17.0            # For code quality
+  - pip:
+    - tensorflow-probability>=0.19.0
+    - ccxt>=3.0.0             # Cryptocurrency exchange library
+    - gym>=0.26.0             # For reinforcement learning environments
+    - ray[tune]>=2.4.0        # For distributed training
+    - plotly>=5.13.0          # For interactive visualizations
+    - dash>=2.9.0             # For web dashboards
