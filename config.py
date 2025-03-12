@@ -7,7 +7,7 @@ from datetime import datetime
 from pathlib import Path
 
 # Paths
-BASE_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
+BASE_DIR = Path("/Users/mrsmoothy/Desktop/rsidtrade/trading_")
 DATA_DIR = Path("/Users/mrsmoothy/Desktop/rsidtrade/binance_data_sets")
 RESULTS_DIR = BASE_DIR / "results"
 MODELS_DIR = BASE_DIR / "models"

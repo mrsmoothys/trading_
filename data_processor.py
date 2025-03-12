@@ -191,21 +191,25 @@ def create_training_sequences(
     overlap: bool = True,
     normalize: bool = True
 ) -> Tuple[np.ndarray, np.ndarray]:
-    """
-    Create sequences of data for training machine learning models.
     
-    Args:
-        df: DataFrame with features and target
-        lookback_window: Number of time steps to look back
-        prediction_horizon: Number of time steps to predict
-        feature_columns: List of feature column names
-        target_column: Column name for the target variable
-        overlap: Whether to allow overlapping sequences
-        normalize: Whether to normalize each sequence
+    if len(feature_columns) > 36:
+        print(f"WARNING: Limiting features from {len(feature_columns)} to 36 to match model")
+        feature_columns = feature_columns[:36]
+        """
+        Create sequences of data for training machine learning models.
         
-    Returns:
-        Tuple of (X, y) arrays for training
-    """
+        Args:
+            df: DataFrame with features and target
+            lookback_window: Number of time steps to look back
+            prediction_horizon: Number of time steps to predict
+            feature_columns: List of feature column names
+            target_column: Column name for the target variable
+            overlap: Whether to allow overlapping sequences
+            normalize: Whether to normalize each sequence
+            
+        Returns:
+            Tuple of (X, y) arrays for training
+        """
     data = df[feature_columns + [target_column]].values
     X, y = [], []
     

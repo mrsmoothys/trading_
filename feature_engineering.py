@@ -153,7 +153,7 @@ class FeatureEngineer:
         ).psar()
         
         # Aroon Indicator
-        aroon = ta.trend.AroonIndicator(self.df['close'])
+        aroon = ta.trend.AroonIndicator(high=self.df['high'], low=self.df['low'])
         self.df['aroon_up'] = aroon.aroon_up()
         self.df['aroon_down'] = aroon.aroon_down()
         self.df['aroon_indicator'] = aroon.aroon_indicator()

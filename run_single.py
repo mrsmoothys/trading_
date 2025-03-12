@@ -563,6 +563,11 @@ def main():
         # Step 2: Split data for training and validation
         feature_columns = [col for col in data.columns if col not in ['open', 'high', 'low', 'close', 'volume']]
         
+        # FIXED: Ensure we use only the first 36 features to match model structure
+        if len(feature_columns) > 36:
+            print(f"WARNING: Limiting feature count from {len(feature_columns)} to 36 to match model architecture")
+            feature_columns = feature_columns[:36]
+
         # Create sequences
         X, y = create_training_sequences(
             data,
