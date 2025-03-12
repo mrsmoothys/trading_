@@ -76,7 +76,7 @@ class DeepLearningModel:
         # First LSTM layer
         model.add(LSTM(
             self.hidden_layers[0],
-            input_shape=self.input_shape,
+            input_shape=(self.input_shape[0], 55),  # Changed to 55 features
             return_sequences=len(self.hidden_layers) > 1,
             activation='tanh',
             recurrent_activation='sigmoid'
