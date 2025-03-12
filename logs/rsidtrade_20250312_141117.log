@@ -21,3 +21,4 @@
 2025-03-12 14:11:58 - optimizer - INFO - Prepared 61142 sequences with 100 time steps and 36 features
 2025-03-12 14:12:00 - model - INFO - Building lstm model with input shape (100, 36)
 2025-03-12 14:12:01 - model - INFO - Training lstm model with 48914 samples
+2025-03-12 14:16:50 - __main__ - ERROR - Error in single run: Unsupported metric: sharpe_ratio

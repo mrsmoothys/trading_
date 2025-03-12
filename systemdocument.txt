@@ -1,302 +1,104 @@
-# AI Trading System Integration Guide
-
-This guide explains how to effectively integrate and use all components of your AI trading system for cryptocurrency markets.
+# RSIDTrade - AI Trading System Documentation
 
 ## System Overview
+RSIDTrade is an AI-powered trading bot framework for cryptocurrency markets. The system combines machine learning models with technical analysis to generate trading signals and execute trades both in backtest and live environments.
 
-The AI trading system consists of several interconnected modules:
+## Main Components
+- Data processing and feature engineering
+- Machine learning model training and optimization
+- Trading strategy development and backtesting
+- Live trading execution
+- Web dashboard for monitoring and control
 
-1. **Data Processing**: Download, clean, and prepare historical price data
-2. **Feature Engineering**: Generate technical indicators and market structure features
-3. **Model Training**: Train machine learning models to predict price movements
-4. **Strategy Implementation**: Execute trading decisions based on model predictions
-5. **Backtesting**: Evaluate strategies on historical data
-6. **Live Trading**: Connect to exchanges and execute trades in real-time
-7. **Monitoring**: Track performance and visualize results
+## Installation
 
-## Workflow
-
-### 1. Initial Setup
-
-Before using the system, ensure you have the correct environment:
-
-```bash
-# Clone the repository (if applicable)
-git clone https://github.com/yourusername/rsidtrade.git
-cd rsidtrade
-
-# Create and activate conda environment
+### Dependencies
+Use the provided environment.yml file to create a conda environment:
+```
 conda env create -f environment.yml
 conda activate rsidtrade
 ```
 
-### 2. Downloading Historical Data
+## Data Acquisition
 
-Use the data fetcher to download historical price data:
+### Fetch historical data
+```
+python data_fetcher.py --symbols BTCUSDT ETHUSDT --timeframes 1h 4h 1d --start-date 2020-01-01 --end-date 2023-12-31
+```
 
-```bash
-# Download basic data for BTC, ETH, and ADA from 2018 to present
-python data_fetcher.py --symbols BTCUSDT ETHUSDT ADAUSDT --timeframes 1h 4h 1d --start-date 2018-01-01
-
-# List available symbols
+### List available symbols
+```
 python data_fetcher.py --list-symbols
 ```
 
-### 3. Feature Engineering and Model Training
+## Running the System
 
-You can train models using single or batch mode:
-
-```bash
-# Train on a single dataset with optimization
+### Train on a single dataset with optimization
+```
 python run_single.py --data-path /Users/mrsmoothy/Desktop/rsidtrade/binance_data_sets/BTCUSDT_1h_data_2018_to_2025.csv --optimize-model --optimize-strategy --visualize
-
-# Train multiple models in batch mode
-python run_batch.py --symbols BTCUSDT ETHUSDT ADAUSDT --timeframes 1h 4h --optimize --visualize
 ```
 
-For reinforcement learning models:
-
-```bash
-# Train a reinforcement learning strategy
-python rl_strategy.py --symbol BTCUSDT --timeframe 1h --data-path /Users/mrsmoothy/Desktop/rsidtrade/binance_data_sets/BTCUSDT_1h_data_2018_to_2025.csv --episodes 100 --save-path models/rl_BTCUSDT_1h
+### Train on a single dataset without optimization
+```
+python run_single.py --data-path /Users/mrsmoothy/Desktop/rsidtrade/binance_data_sets/BTCUSDT_1h_data_2018_to_2025.csv --visualize
 ```
 
-### 4. Backtesting
-
-The system provides several ways to backtest your strategies:
-
-```bash
-# Detailed backtest on a single dataset
-python run_single.py --data-path /Users/mrsmoothy/Desktop/rsidtrade/binance_data_sets/BTCUSDT_1h_data_2018_to_2025.csv --detailed-backtest --visualize
-
-# Performance comparison across multiple symbols
-python run_batch.py --symbols BTCUSDT ETHUSDT ADAUSDT --timeframes 1h --visualize
+### Run backtest only on existing model
+```
+python run_single.py --data-path /Users/mrsmoothy/Desktop/rsidtrade/binance_data_sets/BTCUSDT_1h_data_2018_to_2025.csv --backtest-only --visualize
 ```
 
-You can also use the web dashboard for visual backtesting:
+### Train on multiple symbols and timeframes
+```
+python run_batch.py --symbols BTCUSDT ETHUSDT --timeframes 1h 4h --start-date 2020-01-01 --end-date 2023-12-31
+```
 
-```bash
-# Start the web dashboard
+### Live trading
+```
+python live_trading.py --exchange binance --api-key YOUR_API_KEY --api-secret YOUR_API_SECRET --testnet --symbols BTCUSDT ETHUSDT --timeframes 1h 4h
+```
+
+### Start web dashboard
+```
 python app.py
 ```
 
-Then navigate to http://localhost:5000/backtest in your browser.
+## Module Documentation
 
-### 5. Live Trading
+### data_processor.py
+Handles loading and preprocessing data files, including train/test splitting and sequence creation.
 
-To run the system in live trading mode:
+### feature_engineering.py
+Generates technical indicators and advanced features from raw price data.
 
-```bash
-# Start live trading with the web dashboard
-python app.py
-```
+### model.py
+Implements deep learning models for price prediction including LSTM, GRU, CNN, Transformer, and ensemble architectures.
 
-Navigate to http://localhost:5000 and use the interface to:
-1. Enter your API credentials
-2. Select symbols and timeframes
-3. Initialize and start the trader
+### strategy.py
+Contains trading strategy implementations that use model predictions to generate signals.
 
-For headless server operation:
+### optimizer.py
+Provides hyperparameter optimization for both models and trading strategies.
 
-```bash
-# Start live trading directly from command line
-python live_trading.py --api-key YOUR_API_KEY --api-secret YOUR_API_SECRET --symbols BTCUSDT ETHUSDT --timeframes 1h 4h --testnet
-```
+### backtest.py
+Backtesting engine to evaluate strategy performance on historical data.
 
-## Component Integration
+### live_trading.py
+Connects to cryptocurrency exchanges for live trading using trained models.
 
-### Data Flow
+### visualize.py
+Creates performance visualizations and reports.
 
-The system components interact with data in the following sequence:
+### app.py
+Web dashboard for monitoring and controlling the trading system.
 
-1. `data_fetcher.py` → Downloads historical OHLCV data from Binance
-2. `data_processor.py` → Loads and preprocesses the data
-3. `feature_engineering.py` → Generates technical features
-4. `model.py` → Trains deep learning models on the features
-5. `strategy.py` or `rl_strategy.py` → Uses models to generate trading signals
-6. `backtest.py` → Evaluates strategy performance on historical data
-7. `live_trading.py` → Executes trades on the exchange
-8. `visualize.py` → Creates performance visualizations
-9. `app.py` → Provides a web interface for all functions
+## Configuration
 
-### Advanced Model Selection
-
-The system supports multiple model architectures:
-
-1. **LSTM**: Good for capturing long-term price patterns
-2. **GRU**: Faster than LSTM with similar performance
-3. **CNN**: Efficient for capturing local patterns
-4. **Transformer**: Best for complex market relationships
-5. **Ensemble**: Combines multiple models for improved stability
-6. **Reinforcement Learning**: For adaptive decision-making
-
-To select the appropriate model:
-
-```bash
-# Use different model architectures
-python run_single.py --data-path /path/to/data.csv --model-type lstm
-python run_single.py --data-path /path/to/data.csv --model-type transformer
-```
-
-For reinforcement learning, use the dedicated module:
-
-```bash
-python rl_strategy.py --symbol BTCUSDT --timeframe 1h --data-path /path/to/data.csv
-```
-
-### Using Multiple Timeframes
-
-The system can leverage data from multiple timeframes to improve decisions:
-
-```bash
-# Train using multiple timeframes
-python run_batch.py --symbols BTCUSDT --timeframes 1h 4h 1d --optimize
-```
-
-In live trading, the system aggregates signals from all timeframes to make more robust decisions.
-
-## Troubleshooting
-
-### Common Issues
-
-1. **API Rate Limits**: If you receive rate limit errors when fetching data, reduce the `--workers` parameter or add delays.
-
-2. **Memory Errors**: For large datasets, consider:
-   - Reducing the number of features with selective feature engineering
-   - Processing fewer symbols at a time
-   - Using smaller batch sizes during training
-
-3. **Model Performance Issues**: If models aren't performing well:
-   - Increase `LOOKBACK_WINDOW` in config.py for longer historical context
-   - Try different model architectures
-   - Run feature importance analysis to focus on useful indicators
-   - Consider using the reinforcement learning approach
-
-4. **Exchange Connection Issues**: 
-   - Ensure API keys have the correct permissions
-   - Check for network connectivity problems
-   - Verify the exchange is operational
-
-### Logs and Debugging
-
-The system maintains comprehensive logs to help with troubleshooting:
-
-```bash
-# View logs
-cat logs/rsidtrade_YYYYMMDD_HHMMSS.log
-
-# Enable detailed debug logging
-python run_single.py --log-level DEBUG --data-path /path/to/data.csv
-```
-
-You can also view logs through the web dashboard at http://localhost:5000/logs.
-
-## Advanced Configuration
-
-### Risk Management
-
-Modify the following parameters in `config.py` to adjust risk management:
-
-```python
-# Trading parameters
-TRADING_FEE = 0.0002  # 0.02%
-SLIPPAGE = 0.002      # 0.2%
-INITIAL_CAPITAL = 10000  # Starting capital for backtests
-POSITION_SIZE = 0.1   # Percentage of capital to risk per trade
-MAX_POSITIONS = 5     # Maximum number of simultaneous positions
-
-# Stop Loss/Take Profit
-ADAPTIVE_SL_TP = True  # Use adaptive stop loss and take profit
-TRAILING_STOP = True   # Use trailing stop
-ATR_SL_MULTIPLIER = 2.0  # Stop loss at 2x ATR if using ATR-based stops
-MIN_RISK_REWARD_RATIO = 1.5  # Minimum risk-reward ratio for trades
-```
-
-### Performance Optimization
-
-For machine learning optimization:
-
-```python
-# Model parameters
-MODEL_TYPE = "lstm"  # Options: "lstm", "gru", "cnn", "transformer", "ensemble"
-HIDDEN_LAYERS = [128, 64, 32]
-DROPOUT_RATE = 0.2
-BATCH_SIZE = 32
-EPOCHS = 100
-EARLY_STOPPING_PATIENCE = 10
-LEARNING_RATE = 0.001
-```
-
-For reinforcement learning optimization:
-
-```bash
-python rl_strategy.py --symbol BTCUSDT --timeframe 1h --data-path /path/to/data.csv --episodes 200
-```
-
-## Production Deployment
-
-For production deployment, consider the following best practices:
-
-1. **Dedicated Server**: Run on a reliable server with stable internet connection
-
-2. **Automated Backups**: Regularly back up models and configuration
-
-3. **Monitoring**: Set up alerts for system health and trade notifications
-
-4. **Failover**: Implement redundancy for critical components
-
-5. **Security**: Secure API keys with proper key management
-
-Example production setup script:
-
-```bash
-#!/bin/bash
-# Production deployment script
-
-# Update code repository
-git pull
-
-# Update environment
-conda env update -f environment.yml
-
-# Start services
-tmux new-session -d -s trading_dashboard 'python app.py'
-tmux new-session -d -s data_fetcher 'python data_fetcher.py --symbols BTCUSDT ETHUSDT --timeframes 1h 4h --start-date 2018-01-01 --workers 2'
-
-# Set up daily model retraining
-(crontab -l 2>/dev/null; echo "0 0 * * * cd /path/to/rsidtrade && conda activate rsidtrade && python run_batch.py --symbols BTCUSDT ETHUSDT --timeframes 1h 4h") | crontab -
-```
-
-## Next Steps
-
-### System Expansion
-
-To expand the system's capabilities:
-
-1. **Add More Exchanges**: Implement connectors for additional exchanges
-
-2. **Support More Assets**: Expand beyond cryptocurrencies to stocks or forex
-
-3. **Advanced Analytics**: Implement portfolio optimization and risk assessment
-
-4. **Custom Indicators**: Develop proprietary technical indicators
-
-5. **Enhanced Visualization**: Create more detailed dashboards and reports
-
-### Continuous Improvement
-
-For ongoing improvement:
-
-1. **Regular Retraining**: Retrain models weekly to adapt to market changes
-
-2. **Feature Evolution**: Continuously evaluate and refine features
-
-3. **Performance Analysis**: Conduct periodic performance reviews
-
-4. **Strategy Diversification**: Implement multiple complementary strategies
-
-## Conclusion
-
-The AI trading system provides a comprehensive framework for developing, testing, and deploying algorithmic trading strategies. By following this integration guide, you can effectively leverage all components to create a sophisticated trading operation.
+Key parameters can be adjusted in config.py, including:
+- Data directories and paths
+- Model architecture and hyperparameters
+- Trading parameters (fees, position sizes, etc.)
+- Optimization settings
+- Visualization options
 
 For further assistance, consult the individual module documentation or seek support in the project repository.

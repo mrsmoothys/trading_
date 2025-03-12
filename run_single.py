@@ -173,7 +173,8 @@ def perform_model_optimization(
     optimizer = ModelOptimizer(
         data_path=data_path,
         result_dir=os.path.join(args.results_dir, 'model_optimization'),
-        n_trials=args.opt_trials
+        n_trials=args.opt_trials,
+        metric='mse'  # Override the config setting to use MSE instead of sharpe_ratio
     )
     
     # Set optimizer data directly to avoid reloading

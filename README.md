@@ -1,48 +1,42 @@
-# AI-ML Trading Bot
+# RSIDTrade: AI-Powered Cryptocurrency Trading System
 
-An advanced algorithmic trading system using machine learning and deep learning to automate cryptocurrency trading decisions.
+RSIDTrade is an advanced trading bot framework for cryptocurrency markets that combines machine learning models with technical analysis to generate trading signals and execute trades in both backtesting and live environments.
 
-## Overview
+## Features
 
-This project implements a comprehensive trading bot that leverages deep learning models to analyze market data, generate trading signals, and execute trades. The system includes modules for data processing, feature engineering, model training, strategy implementation, backtesting, and visualization.
-
-Key features:
-
-- Support for multiple cryptocurrency trading pairs and timeframes
-- Advanced feature engineering with technical indicators and market structure analysis
-- Deep learning model architectures (LSTM, GRU, CNN, Transformer, and Ensemble)
-- Adaptive stop-loss and take-profit mechanisms
-- Trailing stop implementation based on market structure
-- Hyperparameter optimization for models and strategies
-- Detailed backtesting with performance metrics
-- Comprehensive visualization dashboards
-
-## System Requirements
-
-- Python 3.8+
-- macOS (optimized for M1 Macs)
-- 8GB+ RAM
+- **AI-Powered Trading**: Utilizes deep learning models (LSTM, GRU, CNN, Transformer, Ensemble) for price prediction
+- **Advanced Feature Engineering**: Generates 50+ technical indicators and market structure features
+- **Hyperparameter Optimization**: Optimizes both model and strategy parameters
+- **Comprehensive Backtesting**: Evaluates strategies with detailed performance metrics
+- **Live Trading Integration**: Connects to cryptocurrency exchanges (currently supports Binance)
+- **Web Dashboard**: Monitor and control the trading system through an interactive web interface
+- **Multi-Asset Support**: Trade multiple symbols and timeframes simultaneously
+- **Reinforcement Learning**: Optional RL-based strategies for advanced decision making
 
 ## Installation
 
+### Prerequisites
+
+- Python 3.10+
+- Conda or Miniconda (recommended)
+
+### Setup
+
 1. Clone the repository:
-   ```
-   git clone https://github.com/yourusername/rsidtrade.git
-   cd rsidtrade
-   ```
+```bash
+git clone https://github.com/yourusername/rsidtrade.git
+cd rsidtrade
+```
 
 2. Create and activate the conda environment:
-   ```
-   conda env create -f environment.yml
-   conda activate rsidtrade
-   ```
+```bash
+conda env create -f environment.yml
+conda activate rsidtrade
+```
 
-3. Verify the installation:
-   ```
-   python -c "import tensorflow as tf; print(tf.config.list_physical_devices('GPU'))"
-   ```
+3. Configure the system by modifying the `config.py` file with your preferred settings.
 
-## Project Structure
+## Directory Structure
 
 ```
 rsidtrade/
