@@ -572,7 +572,7 @@ def main():
             print(f"WARNING: Limiting feature count from {len(feature_columns)} to 55 to match model architecture")
             feature_columns = feature_columns[:55]
 
-        # Create sequences
+        #Create sequences (this returns X with shape (num_samples, lookback_window, num_features))
         X, y = create_training_sequences(
             data,
             lookback_window=args.lookback,
@@ -581,6 +581,9 @@ def main():
             target_column='close',
             normalize=True
         )
+        
+        # Derive actual feature count from X for consistency
+        actual_feature_count = X.shape[2]
         
         # Split data
         X_train, X_val, X_test, y_train, y_val, y_test = train_val_test_split(
@@ -659,9 +662,10 @@ def main():
             actual_feature_count = X.shape[2]  # This will be 36, matching your training inputs
 
             # Create model
+            actual_feature_count = X.shape[2]  # For example, 55
             model = DeepLearningModel(
-                input_shape=(LOOKBACK_WINDOW, actual_feature_count),  # Use actual feature count
-                output_dim=PREDICTION_HORIZON,
+                input_shape=(args.lookback, actual_feature_count),  # Now matches training data
+                output_dim=y.shape[1],
                 model_type=args.model_type,
                 hidden_layers=HIDDEN_LAYERS,
                 dropout_rate=DROPOUT_RATE,

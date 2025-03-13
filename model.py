@@ -1,23 +1,22 @@
 """
 Machine learning model for price prediction in the AI trading bot.
 """
-import logging
 import os
-from typing import Dict, List, Optional, Tuple, Union, Any
-
+import logging
 import numpy as np
 import pandas as pd
+from typing import Dict, List, Optional, Tuple, Union, Any
 import tensorflow as tf
 from tensorflow.keras.models import Sequential, Model, load_model
 from tensorflow.keras.layers import (
-    LSTM, GRU, Dense, Dropout, BatchNormalization, Input,
-    Bidirectional, Conv1D, MaxPooling1D, Flatten, Attention,
-    MultiHeadAttention, LayerNormalization, Concatenate
+    LSTM, GRU, Dense, Dropout, BatchNormalization, Input, Conv1D, 
+    MaxPooling1D, Flatten, MultiHeadAttention, LayerNormalization, Concatenate
 )
 from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint, ReduceLROnPlateau, TensorBoard
 from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.losses import MeanSquaredError, MeanAbsoluteError, Huber
-
+import json  # Add this for JSON operations
+from config import LOOKBACK_WINDOW, PREDICTION_HORIZON
 from config import (
     MODEL_TYPE, HIDDEN_LAYERS, DROPOUT_RATE, BATCH_SIZE, EPOCHS, 
     EARLY_STOPPING_PATIENCE, LEARNING_RATE, MODELS_DIR
@@ -164,7 +163,7 @@ class DeepLearningModel:
             return_seq = True if idx < num_layers - 1 else False
             model.add(GRU(
                 units,
-                return_sequences=return_sequences,
+                return_sequences=True, #changed from return_sequences ==
                 activation='tanh',
                 recurrent_activation='sigmoid'
             ))
@@ -450,12 +449,13 @@ class DeepLearningModel:
             'rmse': np.sqrt(mse)
         }
     
-    def save_model(self, path: str) -> None:
+    def save_model(self, path: str, feature_columns: List[str] = None) -> None:
         """
         Save the model to disk.
         
         Args:
             path: Path to save the model
+            feature_columns: Optional list of feature column names
         """
         if self.model is None:
             raise ValueError("Model not initialized. Call build_model() first.")
@@ -476,7 +476,7 @@ class DeepLearningModel:
         }
         
         # Add feature columns if provided
-        if feature_columns:
+        if feature_columns is not None:  # Fixed: proper None check
             metadata['feature_count'] = len(feature_columns)
             metadata['feature_names'] = feature_columns
         
@@ -706,8 +706,8 @@ if __name__ == "__main__":
     
     # Create model
     model = DeepLearningModel(
-        input_shape=(lookback_window, 55),  # 55 features instead of 36
-        output_dim=prediction_horizon,
+        input_shape=(LOOKBACK_WINDOW, 55),  # 55 features instead of 36
+        output_dim=PREDICTION_HORIZON,
         model_type='lstm',
         hidden_layers=[128, 64],
         dropout_rate=0.2,

@@ -1,0 +1,6 @@
+{
+    "python.analysis.extraPaths": [
+    "/Users/yourusername/venv/lib/python3.x/site-packages"
+],
+"python.analysis.useLibraryCodeForTypes": true
+}

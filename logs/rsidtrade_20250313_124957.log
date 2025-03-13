@@ -1,0 +1,22 @@
+2025-03-13 12:49:57 - utils - INFO - Logging initialized. Log file: /Users/mrsmoothy/Desktop/rsidtrade/trading_/logs/rsidtrade_20250313_124957.log
+2025-03-13 12:49:57 - __main__ - INFO - Starting AI Trading Bot Single Run
+2025-03-13 12:49:57 - utils - INFO - System Information:
+2025-03-13 12:49:57 - utils - INFO -   python_version: 3.10.14
+2025-03-13 12:49:57 - utils - INFO -   system: Darwin
+2025-03-13 12:49:57 - utils - INFO -   release: 24.3.0
+2025-03-13 12:49:57 - utils - INFO -   processor: arm
+2025-03-13 12:49:57 - utils - INFO -   cpu_count: 8
+2025-03-13 12:49:57 - utils - INFO -   memory_total_gb: 8.0
+2025-03-13 12:49:57 - utils - INFO -   tensorflow_version: 2.15.0
+2025-03-13 12:49:57 - utils - INFO -   numpy_version: 1.26.4
+2025-03-13 12:49:57 - utils - INFO -   pandas_version: 2.2.3
+2025-03-13 12:49:57 - __main__ - INFO - Processing BTCUSDT 1h
+2025-03-13 12:49:57 - __main__ - INFO - Loading data
+2025-03-13 12:49:57 - data_processor - INFO - Loading data from /Users/mrsmoothy/Desktop/rsidtrade/binance_data_sets/BTCUSDT_1h_data_2021_to_2023.csv
+2025-03-13 12:49:57 - data_processor - INFO - Loaded 21826 rows of data
+2025-03-13 12:49:57 - __main__ - INFO - Generating features
+2025-03-13 12:50:05 - __main__ - INFO - Creating new model
+2025-03-13 12:50:06 - model - INFO - Building lstm model with input shape (100, 36)
+2025-03-13 12:50:06 - absl - WARNING - At this time, the v2.11+ optimizer `tf.keras.optimizers.Adam` runs slowly on M1/M2 Macs, please use the legacy Keras optimizer instead, located at `tf.keras.optimizers.legacy.Adam`.
+2025-03-13 12:50:06 - __main__ - INFO - Training model
+2025-03-13 12:50:06 - model - INFO - Training lstm model with 15204 samples
