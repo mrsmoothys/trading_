@@ -277,3 +277,8 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 ## Contact
 
 For questions or feedback, please contact [your.email@example.com](mailto:your.email@example.com).
+
+
+python run_single.py --data-path /Users/mrsmoothy/Desktop/rsidtrade/binance_data_sets/BTCUSDT_1h_data_2021_to_2023.csv --optimize-model --optimize-strategy --feature-importance --visualize
+
+python run_single.py --data-path /Users/mrsmoothy/Desktop/rsidtrade/binance_data_sets/BTCUSDT_1h_data_2021_to_2023.csv --visualize

@@ -639,14 +639,13 @@ def main():
             
             # Create model
             model = DeepLearningModel(
-                input_shape=(X.shape[1], X.shape[2]),
-                output_dim=y.shape[1],
-                model_type=model_type,
-                hidden_layers=hidden_layers,
-                dropout_rate=dropout_rate,
-                learning_rate=learning_rate
+                input_shape=(LOOKBACK_WINDOW, actual_feature_count),  # Use actual feature count
+                output_dim=PREDICTION_HORIZON,
+                model_type=args.model_type,
+                hidden_layers=HIDDEN_LAYERS,
+                dropout_rate=DROPOUT_RATE,
+                learning_rate=LEARNING_RATE
             )
-            
             # Train model
             logger.info("Training model")
             

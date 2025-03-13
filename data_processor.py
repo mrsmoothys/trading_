@@ -208,9 +208,12 @@ def create_training_sequences(
     """
     
     # Limit features to match model expectations
-    if len(feature_columns) > 55:   # Changed from 36 to 55
-        print(f"WARNING: Limiting features from {len(feature_columns)} to 55 to match model")
+    feature_columns = [col for col in data.columns if col not in ['open', 'high', 'low', 'close', 'volume']]
+    actual_feature_count = len(feature_columns)
+    if actual_feature_count > 55:
+        print(f"WARNING: Limiting feature count from {actual_feature_count} to 55 to match model architecture")
         feature_columns = feature_columns[:55]
+        actual_feature_count = 55
 
     data = df[feature_columns + [target_column]].values
     X, y = [], []
