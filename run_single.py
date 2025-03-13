@@ -637,6 +637,14 @@ def main():
             learning_rate = model_params.get('learning_rate', LEARNING_RATE)
             batch_size = model_params.get('batch_size', args.batch_size)
             
+
+             #Calculate the actual number of features being used
+            feature_columns = [col for col in data.columns if col not in ['open', 'high', 'low', 'close', 'volume']]
+            actual_feature_count = len(feature_columns)
+            if actual_feature_count > 55:
+                logger.warning(f"Limiting feature count from {actual_feature_count} to 55")
+                feature_columns = feature_columns[:55]
+                actual_feature_count = 55
             # Create model
             model = DeepLearningModel(
                 input_shape=(LOOKBACK_WINDOW, actual_feature_count),  # Use actual feature count
