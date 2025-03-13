@@ -33,9 +33,9 @@ python data_fetcher.py --list-symbols
 
 ## Running the System
 
-### Train on a single dataset with optimization
+### Train on a single dataset with optimizationpython run_single.py --data-path /Users/mrsmoothy/Desktop/rsidtrade/binance_data_sets/BTCUSDT_1h_data_2018_to_2025.csv --optimize-model --optimize-strategy --visualize
+
 ```
-python run_single.py --data-path /Users/mrsmoothy/Desktop/rsidtrade/binance_data_sets/BTCUSDT_1h_data_2018_to_2025.csv --optimize-model --optimize-strategy --visualize
 ```
 
 ### Train on a single dataset without optimization

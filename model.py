@@ -74,27 +74,51 @@ class DeepLearningModel:
         model = Sequential()
         
         # First LSTM layer
-        model.add(LSTM(
-            self.hidden_layers[0],
-            input_shape=self.input_shape,  # Use dynamic input shape from parameters
-            return_sequences=len(self.hidden_layers) > 1,
-            activation='tanh',
-            recurrent_activation='sigmoid'
-        ))
-        model.add(BatchNormalization())
-        model.add(Dropout(self.dropout_rate))
-        
-        # Additional LSTM layers
-        for i, units in enumerate(self.hidden_layers[1:-1], 1):
-            return_sequences = i < len(self.hidden_layers) - 2
+        if len(self.hidden_layers) > 1:
+            # For multiple layers, first LSTM returns sequence output.
             model.add(LSTM(
-                units,
-                return_sequences=return_sequences,
+                self.hidden_layers[0],
+                input_shape=self.input_shape,
+                return_sequences=True,
                 activation='tanh',
                 recurrent_activation='sigmoid'
             ))
             model.add(BatchNormalization())
             model.add(Dropout(self.dropout_rate))
+        
+            # Additional LSTM layers
+            for i, units in enumerate(self.hidden_layers[1:-1], 1):
+                return_sequences = i < len(self.hidden_layers) - 2
+                model.add(LSTM(
+                    units,
+                    return_sequences=True,
+                    activation='tanh',
+                    recurrent_activation='sigmoid'
+                ))
+                model.add(BatchNormalization())
+                model.add(Dropout(self.dropout_rate))
+
+
+                # Final LSTM layer - do NOT return sequence, so that output shape is (batch_size, units)
+            model.add(LSTM(
+                self.hidden_layers[-1],
+                return_sequences=False,
+                activation='tanh',
+                recurrent_activation='sigmoid'
+            ))
+            model.add(BatchNormalization())
+            model.add(Dropout(self.dropout_rate))
+        else:
+            # If only one layer is used, set return_sequences=False directly.
+            model.add(LSTM(
+                self.hidden_layers[0],
+                input_shape=self.input_shape,
+                return_sequences=False,
+                activation='tanh',
+                recurrent_activation='sigmoid'
+            ))
+        model.add(BatchNormalization())
+        model.add(Dropout(self.dropout_rate))
         
         # Final dense layers
         if len(self.hidden_layers) > 1:
@@ -111,20 +135,33 @@ class DeepLearningModel:
         """Build GRU model architecture."""
         model = Sequential()
         
+         # Determine if we have multiple GRU layers
+        num_layers = len(self.hidden_layers)
+
         # First GRU layer
-        model.add(GRU(
-            self.hidden_layers[0],
-            input_shape=self.input_shape,
-            return_sequences=False,  # Force this to False for now
-            activation='tanh',
-            recurrent_activation='sigmoid'
-        ))
+        if num_layers > 1:
+            model.add(GRU(
+                self.hidden_layers[0],
+                input_shape=self.input_shape,
+                return_sequences=False,  # Force this to False for now
+                activation='tanh',
+                recurrent_activation='sigmoid'
+            ))
+        else:
+            model.add(GRU(
+                self.hidden_layers[0],
+                input_shape=self.input_shape,
+                return_sequences=False,
+                activation='tanh',
+                recurrent_activation='sigmoid'
+            ))
         model.add(BatchNormalization())
         model.add(Dropout(self.dropout_rate))
-        
-        # Additional GRU layers
-        for i, units in enumerate(self.hidden_layers[1:-1], 1):
-            return_sequences = i < len(self.hidden_layers) - 2
+
+            # Add any additional GRU layers
+        for idx, units in enumerate(self.hidden_layers[1:], start=1):
+            # For intermediate layers, return sequences; for the final layer, not.
+            return_seq = True if idx < num_layers - 1 else False
             model.add(GRU(
                 units,
                 return_sequences=return_sequences,
@@ -429,6 +466,26 @@ class DeepLearningModel:
         # Save model
         self.model.save(path)
         logger.info(f"Model saved to {path}")
+
+        # Save metadata
+        metadata = {
+            'input_shape': self.input_shape,
+            'output_dim': self.output_dim,
+            'model_type': self.model_type,
+            'datetime_saved': pd.Timestamp.now().isoformat()
+        }
+        
+        # Add feature columns if provided
+        if feature_columns:
+            metadata['feature_count'] = len(feature_columns)
+            metadata['feature_names'] = feature_columns
+        
+        # Save metadata
+        metadata_path = f"{path}_metadata.json"
+        with open(metadata_path, 'w') as f:
+            json.dump(metadata, f)
+        
+        logger.info(f"Model saved to {path} with metadata at {metadata_path}")
     
     def load_model(self, path: str) -> None:
         """
@@ -443,6 +500,24 @@ class DeepLearningModel:
         # Load model
         self.model = load_model(path)
         logger.info(f"Model loaded from {path}")
+
+                # Try to load metadata
+        metadata = {}
+        metadata_path = f"{path}_metadata.json"
+        if os.path.exists(metadata_path):
+            with open(metadata_path, 'r') as f:
+                metadata = json.load(f)
+            logger.info(f"Model loaded from {path} with metadata")
+            
+            # Verify input shape compatibility
+            if 'input_shape' in metadata:
+                loaded_shape = tuple(metadata['input_shape'])
+                if loaded_shape[1] != self.input_shape[1]:  # Compare feature dimensions
+                    logger.warning(f"Input shape mismatch: model expects {loaded_shape[1]} features, but {self.input_shape[1]} provided.")
+        else:
+            logger.warning(f"No metadata found for model at {path}")
+        
+        return metadata
 
 class ModelManager:
     """
@@ -631,10 +706,10 @@ if __name__ == "__main__":
     
     # Create model
     model = DeepLearningModel(
-        input_shape=(50, 10),
-        output_dim=5,
+        input_shape=(lookback_window, 55),  # 55 features instead of 36
+        output_dim=prediction_horizon,
         model_type='lstm',
-        hidden_layers=[64, 32],
+        hidden_layers=[128, 64],
         dropout_rate=0.2,
         learning_rate=0.001
     )

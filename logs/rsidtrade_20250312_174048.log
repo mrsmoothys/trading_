@@ -21,3 +21,80 @@
 2025-03-12 17:41:03 - optimizer - INFO - Prepared 21721 sequences with 100 time steps and 36 features
 2025-03-12 17:41:03 - model - INFO - Building lstm model with input shape (100, 36)
 2025-03-12 17:41:04 - model - INFO - Training lstm model with 17377 samples
+2025-03-12 17:50:54 - model - INFO - Building lstm model with input shape (100, 36)
+2025-03-12 17:50:54 - model - INFO - Training lstm model with 17377 samples
+2025-03-12 18:00:52 - model - INFO - Building lstm model with input shape (100, 36)
+2025-03-12 18:00:53 - model - INFO - Training lstm model with 17377 samples
+2025-03-12 18:11:41 - model - INFO - Building lstm model with input shape (100, 36)
+2025-03-12 18:11:41 - model - INFO - Training lstm model with 17377 samples
+2025-03-12 18:21:54 - model - INFO - Building lstm model with input shape (100, 36)
+2025-03-12 18:21:54 - model - INFO - Training lstm model with 17377 samples
+2025-03-12 18:31:36 - model - INFO - Building gru model with input shape (100, 36)
+2025-03-12 18:31:36 - model - INFO - Training gru model with 17377 samples
+2025-03-12 18:36:26 - model - INFO - Building gru model with input shape (100, 36)
+2025-03-12 18:36:26 - model - INFO - Training gru model with 17377 samples
+2025-03-12 18:41:06 - model - INFO - Building gru model with input shape (100, 36)
+2025-03-12 18:41:06 - model - INFO - Training gru model with 17377 samples
+2025-03-12 18:45:52 - model - INFO - Building gru model with input shape (100, 36)
+2025-03-12 18:45:52 - model - INFO - Training gru model with 17377 samples
+2025-03-12 18:50:36 - model - INFO - Building gru model with input shape (100, 36)
+2025-03-12 18:50:36 - model - INFO - Training gru model with 17377 samples
+2025-03-12 18:55:18 - model - INFO - Building gru model with input shape (100, 36)
+2025-03-12 18:55:18 - model - INFO - Training gru model with 17377 samples
+2025-03-12 18:56:23 - model - INFO - Building gru model with input shape (100, 36)
+2025-03-12 18:56:23 - model - INFO - Training gru model with 17377 samples
+2025-03-12 18:57:29 - model - INFO - Building gru model with input shape (100, 36)
+2025-03-12 18:57:29 - model - INFO - Training gru model with 17377 samples
+2025-03-12 18:58:35 - model - INFO - Building gru model with input shape (100, 36)
+2025-03-12 18:58:35 - model - INFO - Training gru model with 17377 samples
+2025-03-12 18:59:41 - model - INFO - Building gru model with input shape (100, 36)
+2025-03-12 18:59:41 - model - INFO - Training gru model with 17377 samples
+2025-03-12 19:00:47 - model - INFO - Building lstm model with input shape (100, 36)
+2025-03-12 19:00:47 - model - INFO - Training lstm model with 17377 samples
+2025-03-12 19:00:48 - __main__ - ERROR - Error in single run: Graph execution error:
+
+Detected at node sub defined at (most recent call last):
+  File "/Users/mrsmoothy/Desktop/rsidtrade/trading_/run_single.py", line 829, in <module>
+
+  File "/Users/mrsmoothy/Desktop/rsidtrade/trading_/run_single.py", line 607, in main
+
+  File "/Users/mrsmoothy/Desktop/rsidtrade/trading_/run_single.py", line 185, in perform_model_optimization
+
+  File "/Users/mrsmoothy/Desktop/rsidtrade/trading_/optimizer.py", line 196, in optimize
+
+  File "/Users/mrsmoothy/miniforge3/envs/rsidtrade/lib/python3.10/site-packages/optuna/study/study.py", line 475, in optimize
+
+  File "/Users/mrsmoothy/miniforge3/envs/rsidtrade/lib/python3.10/site-packages/optuna/study/_optimize.py", line 63, in _optimize
+
+  File "/Users/mrsmoothy/miniforge3/envs/rsidtrade/lib/python3.10/site-packages/optuna/study/_optimize.py", line 160, in _optimize_sequential
+
+  File "/Users/mrsmoothy/miniforge3/envs/rsidtrade/lib/python3.10/site-packages/optuna/study/_optimize.py", line 197, in _run_trial
+
+  File "/Users/mrsmoothy/Desktop/rsidtrade/trading_/optimizer.py", line 150, in objective
+
+  File "/Users/mrsmoothy/Desktop/rsidtrade/trading_/model.py", line 362, in train
+
+  File "/Users/mrsmoothy/miniforge3/envs/rsidtrade/lib/python3.10/site-packages/keras/src/utils/traceback_utils.py", line 117, in error_handler
+
+  File "/Users/mrsmoothy/miniforge3/envs/rsidtrade/lib/python3.10/site-packages/keras/src/backend/tensorflow/trainer.py", line 371, in fit
+
+  File "/Users/mrsmoothy/miniforge3/envs/rsidtrade/lib/python3.10/site-packages/keras/src/backend/tensorflow/trainer.py", line 219, in function
+
+  File "/Users/mrsmoothy/miniforge3/envs/rsidtrade/lib/python3.10/site-packages/keras/src/backend/tensorflow/trainer.py", line 132, in multi_step_on_iterator
+
+  File "/Users/mrsmoothy/miniforge3/envs/rsidtrade/lib/python3.10/site-packages/keras/src/backend/tensorflow/trainer.py", line 113, in one_step_on_data
+
+  File "/Users/mrsmoothy/miniforge3/envs/rsidtrade/lib/python3.10/site-packages/keras/src/backend/tensorflow/trainer.py", line 84, in train_step
+
+  File "/Users/mrsmoothy/miniforge3/envs/rsidtrade/lib/python3.10/site-packages/keras/src/trainers/trainer.py", line 490, in compute_metrics
+
+  File "/Users/mrsmoothy/miniforge3/envs/rsidtrade/lib/python3.10/site-packages/keras/src/trainers/compile_utils.py", line 334, in update_state
+
+  File "/Users/mrsmoothy/miniforge3/envs/rsidtrade/lib/python3.10/site-packages/keras/src/trainers/compile_utils.py", line 21, in update_state
+
+  File "/Users/mrsmoothy/miniforge3/envs/rsidtrade/lib/python3.10/site-packages/keras/src/metrics/reduction_metrics.py", line 203, in update_state
+
+  File "/Users/mrsmoothy/miniforge3/envs/rsidtrade/lib/python3.10/site-packages/keras/src/losses/losses.py", line 1716, in mean_absolute_error
+
+Incompatible shapes: [24,5] vs. [24,100,5]
+	 [[{{node sub}}]] [Op:__inference_multi_step_on_iterator_2467725]

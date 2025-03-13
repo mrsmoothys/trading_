@@ -109,6 +109,10 @@ def parse_args():
     parser.add_argument('--visualize', action='store_true',
                         help='Generate visualization dashboard')
     
+    # Backtest only flag added here
+    parser.add_argument('--backtest-only', action='store_true',
+                        help='Run backtest only, skipping model training')
+    
     # Advanced options
     parser.add_argument('--save-model', action='store_true',
                         help='Save trained model to disk')
