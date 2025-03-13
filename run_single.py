@@ -645,6 +645,19 @@ def main():
                 logger.warning(f"Limiting feature count from {actual_feature_count} to 55")
                 feature_columns = feature_columns[:55]
                 actual_feature_count = 55
+
+                        # Create sequences
+            X, y = create_training_sequences(
+                data,
+                lookback_window=args.lookback,
+                prediction_horizon=args.horizon,
+                feature_columns=feature_columns,
+                target_column='close',
+                normalize=True
+            )
+            # Derive actual feature count from training data (ensuring consistency)
+            actual_feature_count = X.shape[2]  # This will be 36, matching your training inputs
+
             # Create model
             model = DeepLearningModel(
                 input_shape=(LOOKBACK_WINDOW, actual_feature_count),  # Use actual feature count
