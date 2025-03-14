@@ -511,7 +511,7 @@ class FeatureEngineer:
         # Return the processed DataFrame
         return self.df
 
-def generate_features(df: pd.DataFrame, feature_sets: Dict[str, List[str]] = None) -> pd.DataFrame:
+def generate_features(df: pd.DataFrame, feature_sets: Dict[str, List[str]] = None, max_features: int = 36) -> pd.DataFrame:
     """
     Generate features for the given DataFrame.
     
