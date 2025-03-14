@@ -10,6 +10,8 @@ import pandas as pd
 import ta
 from scipy.signal import argrelextrema
 from statsmodels.nonparametric.kernel_regression import KernelReg
+from sklearn.decomposition import PCA
+from sklearn.preprocessing import StandardScaler
 
 from config import FEATURE_SETS
 
@@ -494,6 +496,20 @@ class FeatureEngineer:
         if 'trend' in self.df.columns and 'volatility_regime' in self.df.columns:
             # Combined regime (trend direction + volatility)
             self.df['market_regime'] = self.df['trend_direction'] * (self.df['volatility_regime'] + 1)
+
+    def apply_pca(self, n_components=30):
+        """
+        Apply PCA to reduce feature dimensionality.
+        
+        Args:
+            n_components: Number of principal components to retain
+            
+        Returns:
+            DataFrame with reduced features
+        """
+        reduced_df, self.pca, self.scaler = apply_pca_reduction(self.df, n_components)
+        self.df = reduced_df
+        return self.df
     
     def generate_all_features(self) -> pd.DataFrame:
         """Generate all features and return the processed DataFrame."""
@@ -511,7 +527,83 @@ class FeatureEngineer:
         # Return the processed DataFrame
         return self.df
 
-def generate_features(df: pd.DataFrame, feature_sets: Dict[str, List[str]] = None, max_features: int = 36) -> pd.DataFrame:
+
+def apply_pca_reduction(data, n_components=30):
+    """
+    Reduce feature dimensionality using PCA with robust handling of extreme values.
+    
+    Args:
+        data: DataFrame with OHLCV and technical features
+        n_components: Number of principal components to retain
+        
+    Returns:
+        Tuple of (reduced_dataframe, pca_model, scaler_model)
+    """
+    # Separate OHLCV columns
+    ohlcv = data[['open', 'high', 'low', 'close', 'volume']]
+    
+    # Get feature columns only (exclude OHLCV and non-numeric columns)
+    feature_cols = []
+    for col in data.columns:
+        if col not in ['open', 'high', 'low', 'close', 'volume']:
+            # Check if column is numeric
+            if pd.api.types.is_numeric_dtype(data[col]):
+                feature_cols.append(col)
+            else:
+                logging.warning(f"Excluding non-numeric column from PCA: {col}")
+    
+    # Ensure we have features to process
+    if not feature_cols:
+        logging.warning("No numeric features available for PCA")
+        return data, None, None
+    
+    # Get features and handle extreme values
+    features = data[feature_cols].copy()
+    
+    # Replace infinity with NaN
+    features.replace([np.inf, -np.inf], np.nan, inplace=True)
+    
+    # Check for extreme values and cap them
+    for col in features.columns:
+        # Calculate percentiles for capping
+        q1 = features[col].quantile(0.01)
+        q99 = features[col].quantile(0.99)
+        
+        # Cap extreme values
+        features[col] = features[col].clip(q1, q99)
+    
+    # Fill remaining NaN values with column means
+    features.fillna(features.mean(), inplace=True)
+    
+    # Double-check for any remaining problematic values
+    if features.isnull().any().any() or np.isinf(features.values).any():
+        logging.warning("Data still contains NaN or infinite values after cleaning")
+        # Replace any remaining problematic values with zeros
+        features.fillna(0, inplace=True)
+        features.replace([np.inf, -np.inf], 0, inplace=True)
+    
+    # Standardize features
+    scaler = StandardScaler()
+    features_scaled = scaler.fit_transform(features)
+    
+    # Apply PCA
+    n_components = min(n_components, len(feature_cols))
+    pca = PCA(n_components=n_components)
+    components = pca.fit_transform(features_scaled)
+    
+    # Create component dataframe
+    component_df = pd.DataFrame(
+        components, 
+        columns=[f'pc_{i+1}' for i in range(n_components)],
+        index=data.index
+    )
+    
+    # Combine with OHLCV
+    reduced_data = pd.concat([ohlcv, component_df], axis=1)
+    
+    return reduced_data, pca, scaler
+
+def generate_features(df: pd.DataFrame, feature_sets: Dict[str, List[str]] = None, apply_pca: bool = False, n_components: int = 30) -> pd.DataFrame:
     """
     Generate features for the given DataFrame.
     
@@ -531,19 +623,14 @@ def generate_features(df: pd.DataFrame, feature_sets: Dict[str, List[str]] = Non
     # Generate all features
     processed_df = feature_engineer.generate_all_features()
     
-    # Filter columns based on requested feature sets
-    if feature_sets:
-        # Flatten the list of features
-        requested_features = ['timestamp', 'open', 'high', 'low', 'close', 'volume']  # Always include OHLCV
-        for feature_set in feature_sets.values():
-            requested_features.extend(feature_set)
+     # Apply PCA if requested
+    if apply_pca:
+        logger.info(f"Applying PCA to reduce features to {n_components} components")
+        processed_df = feature_engineer.apply_pca(n_components)
         
-        # Filter columns
-        available_columns = processed_df.columns.tolist()
-        selected_columns = [col for col in requested_features if col in available_columns]
-        
-        # Create a new DataFrame with only the selected columns
-        processed_df = processed_df[selected_columns]
+        # Store PCA and scaler models for later use
+        feature_engineer.pca_applied = True
+        return processed_df, feature_engineer.pca, feature_engineer.scaler
     
     # Fill any remaining NaN values
     processed_df = processed_df.fillna(method='ffill').fillna(0)

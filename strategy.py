@@ -277,12 +277,13 @@ class TradingStrategy:
         self.current_timestamp = None
         self.current_price = None
     
-    def set_data(self, data: pd.DataFrame) -> None:
+    def set_data(self, data: pd.DataFrame, **kwargs) -> None:
         """
         Set the market data for the strategy.
         
         Args:
             data: Market data as pandas DataFrame
+            **kwargs: Additional keyword arguments (for extensibility)
         """
         self.data = data.copy()
         
@@ -809,6 +810,70 @@ class MLTradingStrategy(TradingStrategy):
         self.lookback_window = lookback_window
         self.prediction_horizon = prediction_horizon
         self.threshold = threshold
+
+    def set_data(self, data: pd.DataFrame, **kwargs) -> None:
+        """
+        Set the market data for the strategy with optional PCA transformation.
+        
+        Args:
+            data: Market data as pandas DataFrame
+            **kwargs: Additional keyword arguments including:
+                - pca_model: Optional PCA model for transformation
+                - scaler_model: Optional scaler model for standardization
+        """
+        # Call the parent implementation first
+        super().set_data(data)
+        
+        # Apply PCA transformation if models are provided
+        pca_model = kwargs.get('pca_model')
+        scaler_model = kwargs.get('scaler_model')
+        
+        if pca_model is not None and scaler_model is not None:
+            self._transform_features_with_pca(pca_model, scaler_model)
+
+    def _transform_features_with_pca(self, pca_model, scaler_model):
+        """
+        Transform features using PCA and scaler models.
+        
+        Args:
+            pca_model: PCA model for dimensionality reduction
+            scaler_model: Scaler model for standardization
+        """
+        # Separate OHLCV
+        ohlcv = self.data[['open', 'high', 'low', 'close', 'volume']]
+        
+        # Get feature columns (excluding OHLCV)
+        feature_cols = [col for col in self.data.columns 
+                    if col not in ['open', 'high', 'low', 'close', 'volume']]
+        
+        if not feature_cols:
+            return  # No features to transform
+        
+        features = self.data[feature_cols]
+        
+        # Handle extreme values
+        features.replace([np.inf, -np.inf], np.nan, inplace=True)
+        features.fillna(features.mean(), inplace=True)
+        
+        # Standardize features
+        try:
+            features_scaled = scaler_model.transform(features)
+            
+            # Apply PCA
+            components = pca_model.transform(features_scaled)
+            
+            # Create component dataframe
+            component_df = pd.DataFrame(
+                components,
+                columns=[f'pc_{i+1}' for i in range(components.shape[1])],
+                index=self.data.index
+            )
+            
+            # Combine with OHLCV
+            self.data = pd.concat([ohlcv, component_df], axis=1)
+        except Exception as e:
+            logger.error(f"Error applying PCA transformation: {e}")
+            # Continue with original data if transformation fails
     
     def generate_signals(self) -> pd.DataFrame:
         """
@@ -896,18 +961,69 @@ class EnsembleTradingStrategy(TradingStrategy):
             # Equal weights by default
             self.weights = [1.0 / len(strategies)] * len(strategies)
     
-    def set_data(self, data: pd.DataFrame) -> None:
+        def set_data(self, data: pd.DataFrame, pca_model=None, scaler_model=None) -> None:
+            """
+            Set the market data for the strategy.
+            
+            Args:
+                data: Market data as pandas DataFrame
+                pca_model: Optional PCA model for feature transformation
+                scaler_model: Optional scaler model for feature standardization
+            """
+        self.data = data.copy()
+        
+        # Transform features with PCA if models are provided
+        if pca_model is not None and scaler_model is not None:
+            self._transform_features_with_pca(pca_model, scaler_model)
+        
+        # Reset position and performance tracking
+        self.position = Position.FLAT
+        self.current_order = None
+        self.orders = []
+        self.trades = []
+        self.equity_curve = [self.initial_capital]
+        self.drawdowns = [0.0]
+        self.returns = [0.0]
+        
+        # Set initial market state
+        self.current_index = 0
+        self.current_timestamp = self.data.index[0]
+        self.current_price = self.data['close'].iloc[0]
+
+    def _transform_features_with_pca(self, pca_model, scaler_model):
         """
-        Set the market data for the strategy and all sub-strategies.
+        Transform features using PCA and scaler models.
         
         Args:
-            data: Market data as pandas DataFrame
+            pca_model: PCA model for dimensionality reduction
+            scaler_model: Scaler model for standardization
         """
-        super().set_data(data)
+        # Separate OHLCV
+        ohlcv = self.data[['open', 'high', 'low', 'close', 'volume']]
         
-        # Set data for all sub-strategies
-        for strategy in self.strategies:
-            strategy.set_data(data)
+        # Get feature columns (excluding OHLCV)
+        feature_cols = [col for col in self.data.columns if col not in ['open', 'high', 'low', 'close', 'volume']]
+        
+        if not feature_cols:
+            return  # No features to transform
+        
+        features = self.data[feature_cols]
+        
+        # Standardize features
+        features_scaled = scaler_model.transform(features)
+        
+        # Apply PCA
+        components = pca_model.transform(features_scaled)
+        
+        # Create component dataframe
+        component_df = pd.DataFrame(
+            components,
+            columns=[f'pc_{i+1}' for i in range(components.shape[1])],
+            index=self.data.index
+        )
+        
+        # Combine with OHLCV
+        self.data = pd.concat([ohlcv, component_df], axis=1)
     
     def generate_signals(self) -> pd.DataFrame:
         """

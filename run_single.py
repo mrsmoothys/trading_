@@ -600,9 +600,14 @@ def main():
         if args.end_date:
             data = data[data.index <= args.end_date]
         
-        # Generate features
-        logger.info("Generating features")
-        data = generate_features(data)
+       # Generate features with PCA reduction
+        logger.info("Generating features with PCA dimensionality reduction")
+        n_components = 30  # Set the number of components to match model expectations
+        data, pca_model, scaler_model = generate_features(data, apply_pca=True, n_components=n_components)
+
+        # Now feature columns are simply the PCA components plus OHLCV
+        feature_columns = [col for col in data.columns if col.startswith('pc_')]
+
         
         # Step 2: Split data for training and validation
         feature_columns = [col for col in data.columns if col not in ['open', 'high', 'low', 'close', 'volume']]
@@ -749,10 +754,23 @@ def main():
                 batch_size=batch_size,
                 save_path=model_path
             )
-            
+
             if model_path:
-                model.save_model(model_path, feature_columns=feature_columns)
                 logger.info(f"Model saved to {model_path}")
+                
+                # Save PCA and scaler models
+                import pickle
+                pca_path = os.path.join(model_dir, f"pca_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pkl")
+                scaler_path = os.path.join(model_dir, f"scaler_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pkl")
+                
+                with open(pca_path, 'wb') as f:
+                    pickle.dump(pca_model, f)
+                
+                with open(scaler_path, 'wb') as f:
+                    pickle.dump(scaler_model, f)
+                
+                logger.info(f"PCA model saved to {pca_path}")
+                logger.info(f"Scaler model saved to {scaler_path}")
         
         # Step 6: Analyze feature importance if requested
         if args.feature_importance:
@@ -820,20 +838,14 @@ def main():
         # Step 9: Run backtest
         logger.info("Running backtest")
         
-        # Prepare data with consistent features for backtest
-        logger.info(f"Preparing data for backtest with {len(feature_columns)} features")
-        backtest_data = prepare_data_for_prediction(data, feature_columns)
+        # Set data for strategy with PCA transformation
+        strategy.set_data(data, pca_model=pca_model, scaler_model=scaler_model)
 
+        # Run backtest
         if args.detailed_backtest:
-            # Run detailed backtest
-            backtest_results = run_detailed_backtest(
-                strategy=strategy,
-                data=backtest_data,  # Use the prepared data
-                args=args
-            )
+            backtest_results = run_detailed_backtest(strategy=strategy, data=data, args=args)
         else:
-            # Run standard backtest
-            backtest_results = strategy.backtest(backtest_data)  # Use the prepared data
+            backtest_results = strategy.backtest(data)
                 
         # Step 10: Save results
         results_path = os.path.join(args.results_dir, f"results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json")
