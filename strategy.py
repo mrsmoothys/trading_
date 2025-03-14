@@ -914,10 +914,8 @@ class MLTradingStrategy(TradingStrategy):
             
             # Generate signal based on predicted return
             if predicted_return > self.threshold:
-                # Predicted positive return above threshold, buy signal
                 signals.loc[signals.index[i], 'signal'] = 1
             elif predicted_return < -self.threshold:
-                # Predicted negative return below threshold, sell signal
                 signals.loc[signals.index[i], 'signal'] = -1
             else:
                 # Predicted return within threshold, neutral signal
