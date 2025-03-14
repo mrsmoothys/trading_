@@ -10,6 +10,8 @@ import json
 import time
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple, Union, Any
+from feature_engineering import apply_pca_reduction
+
 
 import pandas as pd
 import numpy as np
@@ -835,17 +837,34 @@ def main():
             trailing_stop=True
         )
         
+        
         # Step 9: Run backtest
         logger.info("Running backtest")
-        
-        # Set data for strategy with PCA transformation
-        strategy.set_data(data, pca_model=pca_model, scaler_model=scaler_model)
 
-        # Run backtest
-        if args.detailed_backtest:
-            backtest_results = run_detailed_backtest(strategy=strategy, data=data, args=args)
-        else:
-            backtest_results = strategy.backtest(data)
+        # Prepare data with consistent features for backtest
+        n_components = 30
+        logger.info(f"Preparing data for backtest with {n_components} PCA components")
+
+        try:
+            # Apply PCA transformation before backtest
+            backtest_data, pca_model, scaler_model = apply_pca_reduction(data, n_components=n_components)
+            
+            # Set data for strategy with PCA transformation
+            strategy.set_data(backtest_data, pca_model=pca_model, scaler_model=scaler_model)
+            
+            # Run backtest
+            if args.detailed_backtest:
+                backtest_results = run_detailed_backtest(strategy=strategy, data=backtest_data, args=args)
+            else:
+                backtest_results = strategy.backtest(backtest_data)
+        except Exception as e:
+            logger.error(f"Error during PCA processing: {e}")
+            # Fallback to original approach without PCA
+            logger.info("Falling back to standard backtest without PCA")
+            if args.detailed_backtest:
+                backtest_results = run_detailed_backtest(strategy=strategy, data=data, args=args)
+            else:
+                backtest_results = strategy.backtest(data)
                 
         # Step 10: Save results
         results_path = os.path.join(args.results_dir, f"results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json")

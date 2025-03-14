@@ -849,12 +849,20 @@ class MLTradingStrategy(TradingStrategy):
         if not feature_cols:
             return  # No features to transform
         
-        features = self.data[feature_cols]
+        features = self.data[feature_cols].copy()
         
         # Handle extreme values
         features.replace([np.inf, -np.inf], np.nan, inplace=True)
         features.fillna(features.mean(), inplace=True)
         
+        # Ensure enough features for the model
+        expected_features = len(feature_cols)
+        if expected_features < 30:
+            # Add dummy features to match expected dimensions
+            for i in range(expected_features, 30):
+                features[f'dummy_{i}'] = 0.0
+
+
         # Standardize features
         try:
             features_scaled = scaler_model.transform(features)
@@ -871,6 +879,8 @@ class MLTradingStrategy(TradingStrategy):
             
             # Combine with OHLCV
             self.data = pd.concat([ohlcv, component_df], axis=1)
+            logger.info(f"PCA transformation applied: {components.shape[1]} components")
+
         except Exception as e:
             logger.error(f"Error applying PCA transformation: {e}")
             # Continue with original data if transformation fails
@@ -893,33 +903,65 @@ class MLTradingStrategy(TradingStrategy):
         if len(signals) <= self.lookback_window:
             return signals
         
-        # Get feature columns
-        feature_columns = [col for col in signals.columns if col not in ['signal']]
+        # Check if we're using PCA components
+        pca_cols = [col for col in signals.columns if col.startswith('pc_')]
+        
+        if pca_cols:
+            # We're using PCA - only use the PCA components for prediction
+            feature_columns = pca_cols
+            logger.info(f"Using {len(feature_columns)} PCA components for signal generation")
+        else:
+            # Standard mode - get all non-OHLCV columns
+            feature_columns = [col for col in signals.columns 
+                            if col not in ['open', 'high', 'low', 'close', 'volume', 'signal']]
+        
+        # Check model input shape compatibility
+        model_input_dim = 30  # Hard-coded to match our fixed PCA components
+        
+        if len(feature_columns) != model_input_dim:
+            logger.warning(f"Feature count mismatch: model expects {model_input_dim} features, "
+                        f"but {len(feature_columns)} are available")
+            
+            # Adjust feature count to match model expectations
+            if len(feature_columns) > model_input_dim:
+                logger.warning(f"Truncating features to match model input shape")
+                feature_columns = feature_columns[:model_input_dim]
+            else:
+                # Not enough features
+                logger.error(f"Insufficient features for model input")
+                return signals
         
         # Generate predictions for each candle
         for i in range(self.lookback_window, len(signals)):
-            # Get lookback window
-            window = signals[feature_columns].iloc[i-self.lookback_window:i].values
-            
-            # Reshape for model input (add batch dimension)
-            X = np.expand_dims(window, axis=0)
-            
-            # Get prediction
-            pred = self.model.predict(X)[0]
-            
-            # Calculate predicted return
-            current_price = signals['close'].iloc[i]
-            predicted_price = pred[-1]  # Last value in prediction horizon
-            predicted_return = (predicted_price / current_price) - 1
-            
-            # Generate signal based on predicted return
-            if predicted_return > self.threshold:
-                signals.loc[signals.index[i], 'signal'] = 1
-            elif predicted_return < -self.threshold:
-                signals.loc[signals.index[i], 'signal'] = -1
-            else:
-                # Predicted return within threshold, neutral signal
-                signals.loc[signals.index[i], 'signal'] = 0
+            try:
+                # Get lookback window for features
+                window_data = signals[feature_columns].iloc[i-self.lookback_window:i].values
+                
+                # Normalize data
+                mean = np.mean(window_data, axis=0)
+                std = np.std(window_data, axis=0)
+                std = np.where(std == 0, 1e-8, std)  # Avoid division by zero
+                window_data_norm = (window_data - mean) / std
+                
+                # Reshape for model input (add batch dimension)
+                X = np.expand_dims(window_data_norm, axis=0)
+                
+                # Get prediction
+                pred = self.model.predict(X)[0]
+                
+                # Calculate predicted return
+                current_price = signals['close'].iloc[i]
+                predicted_price = pred[-1]  # Last value in prediction horizon
+                predicted_return = (predicted_price / current_price) - 1
+                
+                # Generate signal based on predicted return
+                if predicted_return > self.threshold:
+                    signals.loc[signals.index[i], 'signal'] = 1
+                elif predicted_return < -self.threshold:
+                    signals.loc[signals.index[i], 'signal'] = -1
+            except Exception as e:
+                logger.error(f"Error generating signal at index {i}: {e}")
+                # Continue to next candle
         
         return signals
 

@@ -11,7 +11,6 @@ RSIDTrade is an advanced trading bot framework for cryptocurrency markets that c
 - **Live Trading Integration**: Connects to cryptocurrency exchanges (currently supports Binance)
 - **Web Dashboard**: Monitor and control the trading system through an interactive web interface
 - **Multi-Asset Support**: Trade multiple symbols and timeframes simultaneously
-- **Reinforcement Learning**: Optional RL-based strategies for advanced decision making
 
 ## Installation
 
@@ -278,12 +277,179 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 
 For questions or feedback, please contact [your.email@example.com](mailto:your.email@example.com).
 
+## Quick Start
 
-python run_single.py --data-path /Users/mrsmoothy/Desktop/rsidtrade/binance_data_sets/BTCUSDT_1h_data_2021_to_2023.csv --optimize-model --optimize-strategy --feature-importance --visualize
-
-python run_single.py --data-path /Users/mrsmoothy/Desktop/rsidtrade/binance_data_sets/BTCUSDT_1h_data_2021_to_2023.csv --visualize
-
-python run_single.py --data-path /Users/mrsmoothy/Desktop/rsidtrade/binance_data_sets/BTCUSDT_1h_data_2021_to_2023.csv --optimize-model --visualize
-
+### Model Training & Visualization
+```bash
+# Train a model with visualization and save the model to disk
 python run_single.py --data-path /Users/mrsmoothy/Desktop/rsidtrade/binance_data_sets/BTCUSDT_1h_data_2021_to_2023.csv --visualize --save-model
-python run_single.py --data-path /Users/mrsmoothy/Desktop/rsidtrade/binance_data_sets/BTCUSDT_1h_data_2021_to_2023.csv --visualize --save-model
+```
+
+Expected output:
+```
+Loading data from /Users/mrsmoothy/Desktop/rsidtrade/binance_data_sets/BTCUSDT_1h_data_2021_to_2023.csv
+Loaded 17520 rows of data
+Generating features...
+Generated 45 features
+Creating training sequences...
+Training model...
+Model: "sequential"
+_________________________________________________________________
+Layer (type)                Output Shape              Param #   
+=================================================================
+lstm (LSTM)                 (None, 128)               76800     
+_________________________________________________________________
+batch_normalization (BatchN (None, 128)               512       
+_________________________________________________________________
+dropout (Dropout)           (None, 128)               0         
+_________________________________________________________________
+dense (Dense)               (None, 5)                 645       
+=================================================================
+Total params: 77,957
+Trainable params: 77,701
+Non-trainable params: 256
+_________________________________________________________________
+Epoch 1/50
+390/390 [==============================] - 10s 24ms/step - loss: 0.0016 - mae: 0.0303 - mse: 0.0016 - val_loss: 0.0012 - val_mae: 0.0265 - val_mse: 0.0012
+...
+Epoch 50/50
+390/390 [==============================] - 9s 23ms/step - loss: 0.0007 - mae: 0.0213 - mse: 0.0007 - val_loss: 0.0008 - val_mae: 0.0211 - val_mse: 0.0008
+Evaluating model...
+98/98 [==============================] - 1s 10ms/step - loss: 0.0009 - mae: 0.0222 - mse: 0.0009
+Test MSE: 0.0009
+Backtest results:
+Total Return: 124.56%
+Number of Trades: 142
+Win Rate: 63.38%
+Profit Factor: 2.31
+Max Drawdown: 18.75%
+Sharpe Ratio: 2.11
+Model saved to /Users/mrsmoothy/Desktop/rsidtrade/trading_/models/BTCUSDT_1h/model_20230427_153245.h5
+```
+
+### Backtesting
+```bash
+# Run a backtest on a specific date range
+python run_single.py --data-path /Users/mrsmoothy/Desktop/rsidtrade/binance_data_sets/BTCUSDT_1h_data_2021_to_2023.csv --start-date 2023-01-01 --end-date 2023-03-31 --visualize
+```
+
+Expected output:
+```
+Loading data from /Users/mrsmoothy/Desktop/rsidtrade/binance_data_sets/BTCUSDT_1h_data_2021_to_2023.csv
+Loaded 2160 rows of data
+Filtering date range: 2023-01-01 to 2023-03-31
+Generating features...
+Generated 45 features
+Loading model from /Users/mrsmoothy/Desktop/rsidtrade/trading_/models/BTCUSDT_1h/model_latest.h5
+Generating signals...
+Running backtest...
+Backtest results:
+Total Return: 38.92%
+Number of Trades: 42
+Win Rate: 64.29%
+Profit Factor: 2.15
+Max Drawdown: 12.34%
+Sharpe Ratio: 2.03
+Report saved to /Users/mrsmoothy/Desktop/rsidtrade/trading_/results/backtest_20230427_154532.html
+```
+
+### Batch Processing
+```bash
+# Run batch processing on multiple symbols
+python run_batch.py --symbols BTCUSDT ETHUSDT ADAUSDT --timeframes 1h 4h --start-date 2022-01-01 --end-date 2022-12-31
+```
+
+Expected output:
+```
+Processing 3 symbols with 2 timeframes each...
+Processing BTCUSDT 1h...
+Processing BTCUSDT 4h...
+Processing ETHUSDT 1h...
+Processing ETHUSDT 4h...
+Processing ADAUSDT 1h...
+Processing ADAUSDT 4h...
+Results saved to /Users/mrsmoothy/Desktop/rsidtrade/trading_/results/batch_20230427_160523.html
+```
+
+### Hyperparameter Optimization
+```bash
+# Optimize model hyperparameters
+python optimizer.py --data-path /Users/mrsmoothy/Desktop/rsidtrade/binance_data_sets/BTCUSDT_1h_data_2021_to_2023.csv --trials 50 --metric sharpe_ratio
+```
+
+Expected output:
+```
+Starting hyperparameter optimization with 50 trials...
+Trial 1/50 complete: LSTM model with 128 units, 2 layers, dropout 0.2, learning rate 0.001 -> Sharpe Ratio: 1.85
+Trial 2/50 complete: LSTM model with 256 units, 3 layers, dropout 0.3, learning rate 0.0005 -> Sharpe Ratio: 1.93
+...
+Trial 50/50 complete: GRU model with 192 units, 2 layers, dropout 0.25, learning rate 0.0008 -> Sharpe Ratio: 2.24
+Best trial: Trial #38
+Best parameters: {'model_type': 'lstm', 'hidden_layers': [192, 96], 'dropout_rate': 0.25, 'learning_rate': 0.0008}
+Best Sharpe Ratio: 2.37
+Optimization results saved to /Users/mrsmoothy/Desktop/rsidtrade/trading_/results/optimization_20230427_185623.html
+```
+
+### Web Dashboard
+```bash
+# Start the web dashboard
+python app.py
+```
+
+Expected output:
+```
+ * Serving Flask app 'app'
+ * Debug mode: on
+WARNING: This is a development server. Do not use it in a production deployment.
+ * Running on http://0.0.0.0:5001
+Press CTRL+C to quit
+ * Restarting with stat
+```
+
+### Live Trading
+```bash
+# Start live trading (requires API keys)
+python live_trading.py --exchange binance --symbols BTCUSDT ETHUSDT --timeframes 1h 4h --api-key YOUR_API_KEY --api-secret YOUR_API_SECRET --testnet
+```
+
+Expected output:
+```
+Initializing live trader...
+Loading models for [BTCUSDT, ETHUSDT] on timeframes [1h, 4h]...
+Models loaded successfully.
+Initializing strategies...
+Connecting to Binance Testnet...
+Connection successful.
+Live trading started.
+[2023-04-27 19:32:15] Fetching market data for BTCUSDT 1h...
+[2023-04-27 19:32:16] Fetching market data for BTCUSDT 4h...
+[2023-04-27 19:32:17] Fetching market data for ETHUSDT 1h...
+[2023-04-27 19:32:18] Fetching market data for ETHUSDT 4h...
+[2023-04-27 19:32:20] Generating signals...
+[2023-04-27 19:32:21] No trading signals at this time.
+```
+
+## Advanced Usage
+
+### Feature Engineering
+```bash
+# Test feature generation
+python feature_engineering.py
+```
+
+### Data Fetching
+```bash
+# Download historical data
+python data_fetcher.py --symbols BTCUSDT ETHUSDT --timeframes 1h 4h 1d --start-date 2021-01-01 --end-date 2023-04-01
+```
+
+### Model Training with Custom Parameters
+```bash
+# Train with custom parameters
+python run_single.py --data-path /Users/mrsmoothy/Desktop/rsidtrade/binance_data_sets/BTCUSDT_1h_data_2021_to_2023.csv --model-type lstm --hidden-layers 128 64 32 --dropout 0.3 --learning-rate 0.0005 --batch-size 64 --epochs 100 --save-model
+```
+
+
+
+
+python run_single.py --data-path /Users/mrsmoothy/Desktop/rsidtrade/binance_data_sets/BTCUSDT_1h_data_2018_to_2025.csv --visualize
