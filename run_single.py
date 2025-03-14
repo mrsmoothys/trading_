@@ -388,6 +388,13 @@ def run_detailed_backtest(
     """
     logger = logging.getLogger(__name__)
     logger.info("Running detailed backtest")
+
+    # Ensure we're using the same features for backtesting
+    data_for_backtest = data.copy()
+    if len(feature_columns) > 36:
+        logger.warning(f"Limiting features for backtest from {len(feature_columns)} to 36")
+        feature_columns = feature_columns[:36]
+
     
     # Run standard backtest
     backtest_results = strategy.backtest(data)
@@ -579,7 +586,7 @@ def main():
             prediction_horizon=args.horizon,
             feature_columns=feature_columns,
             target_column='close',
-            normalize=True
+            normalize=True,
         )
         
         # Derive actual feature count from X for consistency
@@ -623,10 +630,27 @@ def main():
             # Load pre-trained model
             logger.info(f"Loading pre-trained model from {args.model_path}")
             model = DeepLearningModel(
-                input_shape=(X.shape[1], X.shape[2]),
-                output_dim=y.shape[1],
-                model_path=args.model_path
+            input_shape=(args.lookback, 36),  # Default to 36 features
+            output_dim=args.horizon,
+            model_path=args.model_path
             )
+             # Get feature columns from metadata
+            metadata = model.load_model(args.model_path)
+            if 'feature_names' in metadata:
+                feature_columns = metadata['feature_names']
+                logger.info(f"Using {len(feature_columns)} features from model metadata")
+                
+                # Create sequences again with the correct features
+                X, y = create_training_sequences(
+                    data,
+                    lookback_window=args.lookback,
+                    prediction_horizon=args.horizon,
+                    feature_columns=feature_columns,
+                    target_column='close',                    
+                    normalize=True,
+
+                )
+
         else:
             # Create new model
             logger.info("Creating new model")
@@ -655,8 +679,8 @@ def main():
                 lookback_window=args.lookback,
                 prediction_horizon=args.horizon,
                 feature_columns=feature_columns,
-                target_column='close',
-                normalize=True
+                target_column='close', 
+                normalize=True,
             )
             # Derive actual feature count from training data (ensuring consistency)
             actual_feature_count = X.shape[2]  # This will be 36, matching your training inputs
@@ -693,6 +717,7 @@ def main():
             )
             
             if model_path:
+                model.save_model(model_path, feature_columns=feature_columns)
                 logger.info(f"Model saved to {model_path}")
         
         # Step 6: Analyze feature importance if requested
@@ -761,17 +786,14 @@ def main():
         # Step 9: Run backtest
         logger.info("Running backtest")
         
-        if args.detailed_backtest:
-            # Run detailed backtest
-            backtest_results = run_detailed_backtest(
-                strategy=strategy,
-                data=data,
-                args=args
-            )
-        else:
-            # Run standard backtest
-            backtest_results = strategy.backtest(data)
-        
+        # Ensure we're using the same features for backtesting
+        data_for_backtest = data.copy()
+        if len(feature_columns) > 36:
+            logger.warning(f"Limiting features for backtest from {len(feature_columns)} to 36")
+            feature_columns = feature_columns[:36]
+
+        backtest_results = strategy.backtest(data_for_backtest)
+                
         # Step 10: Save results
         results_path = os.path.join(args.results_dir, f"results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json")
         

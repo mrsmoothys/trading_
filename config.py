@@ -73,7 +73,7 @@ MODEL_TYPE = "lstm"  # Options: "lstm", "gru", "cnn", "transformer", "ensemble"
 HIDDEN_LAYERS = [128, 64, 32]
 DROPOUT_RATE = 0.2
 BATCH_SIZE = 32
-EPOCHS = 100
+EPOCHS = 1
 EARLY_STOPPING_PATIENCE = 10
 LEARNING_RATE = 0.001
 

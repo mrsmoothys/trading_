@@ -189,7 +189,8 @@ def create_training_sequences(
     feature_columns: List[str],
     target_column: str = 'close',
     overlap: bool = True,
-    normalize: bool = True
+    normalize: bool = True,
+
 ) -> Tuple[np.ndarray, np.ndarray]:
     """
     Create sequences of data for training machine learning models.
@@ -206,15 +207,17 @@ def create_training_sequences(
     Returns:
         Tuple of (X, y) arrays for training
     """
-    
-    # Limit features to match model expectations
-    feature_columns = [col for col in df.columns if col not in ['open', 'high', 'low', 'close', 'volume']]
+    # Use the provided feature columns - don't override them
     actual_feature_count = len(feature_columns)
-    if actual_feature_count > 55:
-        print(f"WARNING: Limiting feature count from {actual_feature_count} to 55 to match model architecture")
-        feature_columns = feature_columns[:55]
-        actual_feature_count = 55
-
+    if actual_feature_count > 36:
+        print(f"WARNING: Limiting feature count from {actual_feature_count} to 36 to match model architecture")
+        feature_columns = feature_columns[:36]
+  
+        # Make sure all requested features exist in the dataframe
+    missing_features = [col for col in feature_columns if col not in df.columns]
+    if missing_features:
+        raise ValueError(f"Missing features in dataframe: {missing_features}")
+    
     data = df[feature_columns + [target_column]].values
     X, y = [], []
     

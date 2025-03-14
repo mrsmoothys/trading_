@@ -52,6 +52,7 @@ class DeepLearningModel:
             learning_rate: Learning rate for optimizer
             model_path: Path to load a pre-trained model
         """
+
         self.input_shape = input_shape
         self.output_dim = output_dim
         self.model_type = model_type
@@ -464,9 +465,15 @@ class DeepLearningModel:
         # Create directory if it doesn't exist
         os.makedirs(os.path.dirname(path), exist_ok=True)
         
-        # Save model
-        self.model.save(path)
-        logger.info(f"Model saved to {path}")
+        
+        # Change file extension from .h5 to .keras if needed
+        if path.endswith('.h5'):
+            keras_path = path.replace('.h5', '.keras')
+        else:
+            keras_path = path
+        
+        # Save model in new format
+        self.model.save(keras_path)
 
         # Save metadata
         metadata = {
