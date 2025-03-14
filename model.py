@@ -302,18 +302,24 @@ class DeepLearningModel:
     
     def _build_model(self) -> None:
         """Build the model based on the selected type."""
-        logger.info(f"Building {self.model_type} model with input shape {self.input_shape} ({feature_count} features)")
+        logger.info(f"Building {self.model_type} model with input shape {self.input_shape}")
         
-         # Adjust hidden layer sizes based on feature count if needed
-        if feature_count > 50:
+        # Extract feature count from input shape
+        # self.input_shape is a tuple like (lookback_window, num_features)
+        num_features = self.input_shape[1]
+
+            # Adjust hidden layer sizes based on feature count if needed
+        if num_features > 50:
             # For high-dimensional inputs, use larger hidden layers
             adjusted_hidden_layers = [int(size * 1.5) for size in self.hidden_layers]
             self.hidden_layers = adjusted_hidden_layers
-        elif feature_count < 10:
+            logger.info(f"Adjusted hidden layers for large feature set: {self.hidden_layers}")
+        elif num_features < 10:
             # For low-dimensional inputs, use smaller hidden layers
             adjusted_hidden_layers = [max(int(size * 0.5), 16) for size in self.hidden_layers]
             self.hidden_layers = adjusted_hidden_layers
-
+            logger.info(f"Adjusted hidden layers for small feature set: {self.hidden_layers}")
+            
           # Build model based on selected type
 
         if self.model_type == 'lstm':

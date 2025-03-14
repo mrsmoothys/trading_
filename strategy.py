@@ -612,14 +612,51 @@ class TradingStrategy:
         return profit_amount, profit_percentage
     
     def generate_signals(self) -> pd.DataFrame:
-        """
-        Generate trading signals from the input data.
+        """Generate trading signals from model predictions."""
+        if self.data is None:
+            raise ValueError("Data not set. Call set_data() first.")
         
-        Returns:
-            DataFrame with added signal column
-        """
-        # This method should be implemented by derived classes
-        raise NotImplementedError("Derived classes must implement generate_signals")
+        # Add signal column
+        signals = self.data.copy()
+        signals['signal'] = 0
+        
+        # Get feature columns
+        feature_columns = [col for col in signals.columns if col not in ['open', 'high', 'low', 'close', 'volume', 'signal']]
+        
+        # Limit features to match model input shape
+        expected_features = self.model.input_shape[2]
+        if len(feature_columns) > expected_features:
+            logger.warning(f"Limiting features from {len(feature_columns)} to {expected_features} to match model")
+            feature_columns = feature_columns[:expected_features]
+        
+        # Generate predictions
+        for i in range(self.lookback_window, len(signals)):
+            # Create input sequence
+            sequence = signals[feature_columns].iloc[i-self.lookback_window:i].values
+            
+            # Normalize sequence
+            mean = np.mean(sequence, axis=0)
+            std = np.std(sequence, axis=0)
+            std = np.where(std == 0, 1e-8, std)
+            normalized_sequence = (sequence - mean) / std
+            
+            # Reshape for model input
+            X = np.expand_dims(normalized_sequence, axis=0)
+            
+            # Make prediction
+            pred = self.model.predict(X)[0]
+            
+            # Generate signal from prediction
+            current_price = signals['close'].iloc[i]
+            predicted_price = pred[-1]
+            predicted_return = (predicted_price / current_price) - 1
+            
+            if predicted_return > self.threshold:
+                signals.loc[signals.index[i], 'signal'] = 1
+            elif predicted_return < -self.threshold:
+                signals.loc[signals.index[i], 'signal'] = -1
+        
+        return signals
     
     def backtest(self, data: pd.DataFrame) -> Dict[str, Any]:
         """

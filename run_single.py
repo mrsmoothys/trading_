@@ -522,6 +522,38 @@ def run_detailed_backtest(
     logger.info("Detailed backtest completed")
     return backtest_results
 
+def prepare_data_for_prediction(data, feature_columns, max_features=36):
+    """
+    Prepare data with consistent feature selection for prediction.
+    
+    Args:
+        data: DataFrame with all features
+        feature_columns: List of feature columns to use
+        max_features: Maximum number of features to include
+        
+    Returns:
+        DataFrame with consistent feature selection
+    """
+
+    logger = logging.getLogger(__name__)
+    
+    # Ensure we don't exceed the maximum feature count
+    if len(feature_columns) > max_features:
+        logger.warning(f"Limiting features from {len(feature_columns)} to {max_features} for prediction")
+        feature_columns = feature_columns[:max_features]
+    
+    # Select only the features that were used during training plus OHLCV
+    prediction_features = ['open', 'high', 'low', 'close', 'volume'] + feature_columns
+    
+    # Filter to only include columns that exist in the data
+    available_columns = data.columns.tolist()
+    selected_columns = [col for col in prediction_features if col in available_columns]
+    
+    logger.info(f"Using {len(selected_columns)} columns for prediction data")
+    
+    # Return data with only the selected columns
+    return data[selected_columns]
+
 def main():
     """Main function."""
     # Parse arguments
@@ -788,13 +820,20 @@ def main():
         # Step 9: Run backtest
         logger.info("Running backtest")
         
-        # Ensure we're using the same features for backtesting
-        data_for_backtest = data.copy()
-        if len(feature_columns) > 36:
-            logger.warning(f"Limiting features for backtest from {len(feature_columns)} to 36")
-            feature_columns = feature_columns[:36]
+        # Prepare data with consistent features for backtest
+        logger.info(f"Preparing data for backtest with {len(feature_columns)} features")
+        backtest_data = prepare_data_for_prediction(data, feature_columns)
 
-        backtest_results = strategy.backtest(data_for_backtest)
+        if args.detailed_backtest:
+            # Run detailed backtest
+            backtest_results = run_detailed_backtest(
+                strategy=strategy,
+                data=backtest_data,  # Use the prepared data
+                args=args
+            )
+        else:
+            # Run standard backtest
+            backtest_results = strategy.backtest(backtest_data)  # Use the prepared data
                 
         # Step 10: Save results
         results_path = os.path.join(args.results_dir, f"results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json")
