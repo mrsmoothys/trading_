@@ -9,8 +9,9 @@ from typing import Dict, List, Optional, Tuple, Union, Any
 import tensorflow as tf
 from tensorflow.keras.models import Sequential, Model, load_model
 from tensorflow.keras.layers import (
-    LSTM, GRU, Dense, Dropout, BatchNormalization, Input, Conv1D, 
-    MaxPooling1D, Flatten, MultiHeadAttention, LayerNormalization, Concatenate
+    LSTM, GRU, Dense, Dropout, BatchNormalization, Input,
+    Bidirectional, Conv1D, MaxPooling1D, Flatten, Attention,
+    MultiHeadAttention, LayerNormalization, Concatenate
 )
 from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint, ReduceLROnPlateau, TensorBoard
 from tensorflow.keras.optimizers import Adam
@@ -25,7 +26,7 @@ from config import (
 logger = logging.getLogger(__name__)
 
 class DeepLearningModel:
-    """
+    """now h
     Deep learning model for price prediction.
     """
     
@@ -706,7 +707,7 @@ if __name__ == "__main__":
     
     # Create model
     model = DeepLearningModel(
-        input_shape=(LOOKBACK_WINDOW, 55),  # 55 features instead of 36
+        input_shape=(LOOKBACK_WINDOW, 36),  # 55 features instead of 36
         output_dim=PREDICTION_HORIZON,
         model_type='lstm',
         hidden_layers=[128, 64],

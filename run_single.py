@@ -568,9 +568,9 @@ def main():
         # Step 2: Split data for training and validation
         feature_columns = [col for col in data.columns if col not in ['open', 'high', 'low', 'close', 'volume']]
            # FIXED: Ensure we use only the first 55 features to match model structure
-        if len(feature_columns) > 55:
+        if len(feature_columns) > 36:
             print(f"WARNING: Limiting feature count from {len(feature_columns)} to 55 to match model architecture")
-            feature_columns = feature_columns[:55]
+            feature_columns = feature_columns[:36]
 
         #Create sequences (this returns X with shape (num_samples, lookback_window, num_features))
         X, y = create_training_sequences(
@@ -644,10 +644,10 @@ def main():
              #Calculate the actual number of features being used
             feature_columns = [col for col in data.columns if col not in ['open', 'high', 'low', 'close', 'volume']]
             actual_feature_count = len(feature_columns)
-            if actual_feature_count > 55:
-                logger.warning(f"Limiting feature count from {actual_feature_count} to 55")
-                feature_columns = feature_columns[:55]
-                actual_feature_count = 55
+            if actual_feature_count > 36:
+                logger.warning(f"Limiting feature count from {actual_feature_count} to 36")
+                feature_columns = feature_columns[:36]
+                actual_feature_count = 36
 
                         # Create sequences
             X, y = create_training_sequences(

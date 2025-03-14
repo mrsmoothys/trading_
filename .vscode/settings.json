@@ -1,6 +1,8 @@
 {
     "python.analysis.extraPaths": [
-    "/Users/yourusername/venv/lib/python3.x/site-packages"
-],
-"python.analysis.useLibraryCodeForTypes": true
+        "/Users/mrsmoothy/miniforge3/envs/rsidtrade_new/lib/python3.10/site-packages"
+    ],
+    "python.autoComplete.extraPaths": [
+        "/Users/mrsmoothy/miniforge3/envs/rsidtrade_new/lib/python3.10/site-packages"
+    ]
 }
