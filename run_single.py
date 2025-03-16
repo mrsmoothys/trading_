@@ -772,7 +772,7 @@ def main():
                 lookback_window=args.lookback,
                 prediction_horizon=args.horizon,
                 feature_columns=feature_columns,
-                target_column='close', 
+                target_column='close_return',  # Changed from 'close' to 'close_return'
                 normalize=True,
             )
             # Derive actual feature count from training data (ensuring consistency)
@@ -893,26 +893,66 @@ def main():
         # Step 9: Run backtest
         logger.info("Running backtest")
 
-        # Prepare data with consistent features for backtest
-        n_components = 30
-        logger.info(f"Preparing data for backtest with {n_components} PCA components")
-
+        # Use the models created during training for the backtest
         try:
-            # Apply PCA transformation before backtest
-            backtest_data, pca_model, scaler_model = apply_pca_reduction(data, n_components=n_components)
-            
-            # Set data for strategy with PCA transformation
-            strategy.set_data(backtest_data, pca_model=pca_model, scaler_model=scaler_model)
-            
-            # Run backtest
-            if args.detailed_backtest:
-                backtest_results = run_detailed_backtest(strategy=strategy, data=backtest_data, args=args)
+            # Check if we have valid PCA and scaler models from training
+            if 'pca_model' in locals() and 'scaler_model' in locals() and pca_model is not None and scaler_model is not None:
+                logger.info(f"Using existing PCA model from training for backtest")
+                
+                # Extract OHLCV data
+                ohlcv_data = data[['open', 'high', 'low', 'close', 'volume']]
+                
+                # Extract feature data (excluding OHLCV)
+                feature_data = data[[col for col in data.columns if col not in ['open', 'high', 'low', 'close', 'volume']]]
+                
+                try:
+                    # Handle missing or non-numeric values in feature data
+                    feature_data = feature_data.replace([np.inf, -np.inf], np.nan)
+                    feature_data = feature_data.fillna(feature_data.mean())
+                    
+                    # Apply the same standardization
+                    features_scaled = scaler_model.transform(feature_data)
+                    
+                    # Apply the same PCA transformation
+                    pca_components = pca_model.transform(features_scaled)
+                    
+                    # Create component dataframe
+                    component_df = pd.DataFrame(
+                        pca_components,
+                        columns=[f'pc_{i+1}' for i in range(pca_components.shape[1])],
+                        index=data.index
+                    )
+                    
+                    # Combine with OHLCV to create backtest data
+                    backtest_data = pd.concat([ohlcv_data, component_df], axis=1)
+                    
+                    logger.info(f"Successfully prepared backtest data with {pca_components.shape[1]} PCA components")
+                    
+                    # Set data for strategy
+                    strategy.set_data(backtest_data, pca_model=pca_model, scaler_model=scaler_model)
+                    
+                    # Run backtest
+                    if args.detailed_backtest:
+                        backtest_results = run_detailed_backtest(strategy=strategy, data=backtest_data, args=args)
+                    else:
+                        backtest_results = strategy.backtest(backtest_data)
+                        
+                except Exception as e:
+                    logger.error(f"Error during PCA transformation: {e}")
+                    # Fall back to no transformation
+                    raise
             else:
-                backtest_results = strategy.backtest(backtest_data)
+                logger.warning("No PCA model available from training, using original data for backtest")
+                raise ValueError("Missing PCA or scaler model")
+                
         except Exception as e:
-            logger.error(f"Error during PCA processing: {e}")
-            # Fallback to original approach without PCA
+            logger.error(f"PCA-based backtest failed: {e}")
             logger.info("Falling back to standard backtest without PCA")
+            
+            # Set data without PCA
+            strategy.set_data(data)
+            
+            # Run backtest on original data
             if args.detailed_backtest:
                 backtest_results = run_detailed_backtest(strategy=strategy, data=data, args=args)
             else:

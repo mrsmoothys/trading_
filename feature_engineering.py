@@ -531,103 +531,106 @@ class FeatureEngineer:
 
 
 def apply_pca_reduction(data, n_components=30, variance_threshold=0.95):
-        """
-        Reduce feature dimensionality using PCA with enhanced efficiency.
+    """
+    Reduce feature dimensionality using PCA with enhanced efficiency.
+    
+    Args:
+        data: DataFrame with OHLCV and technical features
+        n_components: Target number of principal components (max)
+        variance_threshold: Minimum explained variance to preserve (0-1)
         
-        Args:
-            data: DataFrame with OHLCV and technical features
-            n_components: Target number of principal components (max)
-            variance_threshold: Minimum explained variance to preserve (0-1)
-            
-        Returns:
-            Tuple of (reduced_dataframe, pca_model, scaler_model)
-        """
-        # Separate OHLCV columns
-        ohlcv = data[['open', 'high', 'low', 'close', 'volume']]
-        
-        # Get feature columns only (exclude OHLCV and non-numeric columns)
-        feature_cols = []
-        for col in data.columns:
-            if col not in ['open', 'high', 'low', 'close', 'volume']:
-                # Check if column is numeric
-                if pd.api.types.is_numeric_dtype(data[col]):
-                    feature_cols.append(col)
-                else:
-                    logging.warning(f"Excluding non-numeric column from PCA: {col}")
-        
-        # Pre-filter features based on variance to remove near-constant features
-        features = data[feature_cols].copy()
-        features.replace([np.inf, -np.inf], np.nan, inplace=True)
-        features.fillna(features.mean(), inplace=True)
-        
-        # Remove low-variance features (nearly constant features provide little information)
-        from sklearn.feature_selection import VarianceThreshold
-        min_variance = 0.01  # Threshold for variance filtering
-        selector = VarianceThreshold(threshold=min_variance)
-        
-        try:
-            features_values = selector.fit_transform(features)
-            # Get selected feature names
-            selected_indices = selector.get_support(indices=True)
-            selected_features = [feature_cols[i] for i in selected_indices]
-            
-            if len(selected_features) > 0:
-                features = features[selected_features]
-                logging.info(f"Reduced features from {len(feature_cols)} to {len(selected_features)} using variance threshold")
+    Returns:
+        Tuple of (reduced_dataframe, pca_model, scaler_model)
+    """
+    # Separate OHLCV and returns columns
+    keep_columns = ['open', 'high', 'low', 'close', 'volume', 
+                   'close_return', 'log_return']
+    
+    basic_data = data[keep_columns].copy() if all(col in data.columns for col in keep_columns) else data[['open', 'high', 'low', 'close', 'volume']].copy()
+    
+    # Get feature columns only
+    feature_cols = []
+    for col in data.columns:
+        if col not in basic_data.columns:
+            # Check if column is numeric
+            if pd.api.types.is_numeric_dtype(data[col]):
+                feature_cols.append(col)
             else:
-                # If all features are removed, keep original features
-                logging.warning("All features would be removed by variance threshold, keeping original features")
-                features = data[feature_cols]
-        except Exception as e:
-            logging.warning(f"Error in variance filtering: {e}, using all features")
-            features = data[feature_cols]
+                logging.warning(f"Excluding non-numeric column from PCA: {col}")
+    
+    # Pre-filter features based on variance to remove near-constant features
+    features = data[feature_cols].copy()
+    features.replace([np.inf, -np.inf], np.nan, inplace=True)
+    features.fillna(features.mean(), inplace=True)
+    
+    # Remove low-variance features (nearly constant features provide little information)
+    from sklearn.feature_selection import VarianceThreshold
+    min_variance = 0.01  # Threshold for variance filtering
+    selector = VarianceThreshold(threshold=min_variance)
+    
+    try:
+        features_values = selector.fit_transform(features)
+        # Get selected feature names
+        selected_indices = selector.get_support(indices=True)
+        selected_features = [feature_cols[i] for i in selected_indices]
         
-        # Standardize features
-        from sklearn.preprocessing import StandardScaler
-        scaler = StandardScaler()
-        features_scaled = scaler.fit_transform(features)
-        
-        # Apply PCA with automatic component selection based on explained variance
-        from sklearn.decomposition import PCA
-        
-        # First run with high number of components to analyze explained variance
-        initial_components = min(n_components, features_scaled.shape[1], features_scaled.shape[0])
-        if initial_components < 2:
-            # Not enough data for PCA, return original data
-            return data, None, None
-        
-        pca_initial = PCA(n_components=initial_components)
-        pca_initial.fit(features_scaled)
-        
-        # Determine optimal number of components based on explained variance
-        explained_variance_ratio = pca_initial.explained_variance_ratio_
-        cumulative_variance = np.cumsum(explained_variance_ratio)
-        
-        # Find number of components that explain at least variance_threshold of the variance
-        optimal_components = next((i for i, var in enumerate(cumulative_variance) if var >= variance_threshold), initial_components)
-        optimal_components = min(optimal_components + 1, initial_components)  # Add one for safety, but don't exceed max
-        
-        logging.info(f"Selected {optimal_components} components explaining {cumulative_variance[optimal_components-1]*100:.1f}% of variance")
-        
-        # If the optimal number is different from initial, rerun PCA
-        if optimal_components < initial_components:
-            pca = PCA(n_components=optimal_components)
-            components = pca.fit_transform(features_scaled)
+        if len(selected_features) > 0:
+            features = features[selected_features]
+            logging.info(f"Reduced features from {len(feature_cols)} to {len(selected_features)} using variance threshold")
         else:
-            pca = pca_initial
-            components = pca_initial.transform(features_scaled)
-        
-        # Create component dataframe
-        component_df = pd.DataFrame(
-            components, 
-            columns=[f'pc_{i+1}' for i in range(components.shape[1])],
-            index=data.index
-        )
-        
-        # Combine with OHLCV
-        reduced_data = pd.concat([ohlcv, component_df], axis=1)
-        
-        return reduced_data, pca, scaler
+            # If all features are removed, keep original features
+            logging.warning("All features would be removed by variance threshold, keeping original features")
+            features = data[feature_cols]
+    except Exception as e:
+        logging.warning(f"Error in variance filtering: {e}, using all features")
+        features = data[feature_cols]
+    
+    # Standardize features
+    from sklearn.preprocessing import StandardScaler
+    scaler = StandardScaler()
+    features_scaled = scaler.fit_transform(features)
+    
+    # Apply PCA with automatic component selection based on explained variance
+    from sklearn.decomposition import PCA
+    
+    # First run with high number of components to analyze explained variance
+    initial_components = min(n_components, features_scaled.shape[1], features_scaled.shape[0])
+    if initial_components < 2:
+        # Not enough data for PCA, return original data
+        return data, None, None
+    
+    pca_initial = PCA(n_components=initial_components)
+    pca_initial.fit(features_scaled)
+    
+    # Determine optimal number of components based on explained variance
+    explained_variance_ratio = pca_initial.explained_variance_ratio_
+    cumulative_variance = np.cumsum(explained_variance_ratio)
+    
+    # Find number of components that explain at least variance_threshold of the variance
+    optimal_components = next((i for i, var in enumerate(cumulative_variance) if var >= variance_threshold), initial_components)
+    optimal_components = min(optimal_components + 1, initial_components)  # Add one for safety, but don't exceed max
+    
+    logging.info(f"Selected {optimal_components} components explaining {cumulative_variance[optimal_components-1]*100:.1f}% of variance")
+    
+    # If the optimal number is different from initial, rerun PCA
+    if optimal_components < initial_components:
+        pca = PCA(n_components=optimal_components)
+        components = pca.fit_transform(features_scaled)
+    else:
+        pca = pca_initial
+        components = pca_initial.transform(features_scaled)
+    
+    # Create component dataframe
+    component_df = pd.DataFrame(
+        components, 
+        columns=[f'pc_{i+1}' for i in range(components.shape[1])],
+        index=data.index
+    )
+    
+    # Combine with basic data (OHLCV + returns)
+    reduced_data = pd.concat([basic_data, component_df], axis=1)
+    
+    return reduced_data, pca, scaler
 
 
 def generate_features(df: pd.DataFrame, feature_sets: Dict[str, List[str]] = None, apply_pca: bool = False, n_components: int = 30) -> pd.DataFrame:
@@ -637,6 +640,8 @@ def generate_features(df: pd.DataFrame, feature_sets: Dict[str, List[str]] = Non
     Args:
         df: DataFrame with OHLCV data
         feature_sets: Dictionary of feature sets to generate
+        apply_pca: Whether to apply PCA
+        n_components: Number of PCA components
         
     Returns:
         DataFrame with generated features
@@ -650,6 +655,15 @@ def generate_features(df: pd.DataFrame, feature_sets: Dict[str, List[str]] = Non
     # Generate all features
     processed_df = feature_engineer.generate_all_features()
     
+    # Add returns-based features if not present
+    if 'close_return' not in processed_df.columns:
+        processed_df['close_return'] = processed_df['close'].pct_change()
+        processed_df['log_return'] = np.log(processed_df['close'] / processed_df['close'].shift(1))
+    
+    # Add volatility-normalized returns
+    rolling_std = processed_df['close'].rolling(20).std()
+    processed_df['norm_return'] = processed_df['close_return'] / (rolling_std / processed_df['close'])
+    
     # Ensure all columns are numeric before PCA
     for col in processed_df.columns:
         if col not in ['open', 'high', 'low', 'close', 'volume']:
@@ -660,17 +674,15 @@ def generate_features(df: pd.DataFrame, feature_sets: Dict[str, List[str]] = Non
                 # Remove problematic column
                 processed_df = processed_df.drop(col, axis=1)
 
-
-     # Apply PCA if requested
+    # Apply PCA if requested
     if apply_pca:
         logger.info(f"Applying PCA to reduce features to {n_components} components")
-        processed_df = feature_engineer.apply_pca(n_components)
+        processed_df, pca_model, scaler_model = apply_pca_reduction(processed_df, n_components)
         
         # Store PCA and scaler models for later use
-        feature_engineer.pca_applied = True
-        return processed_df, feature_engineer.pca, feature_engineer.scaler
+        return processed_df, pca_model, scaler_model
     
-   # Replace deprecated method with newer methods
+    # Replace deprecated method with newer methods
     processed_df = processed_df.ffill().fillna(0)
     
     return processed_df

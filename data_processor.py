@@ -97,8 +97,19 @@ def load_data(file_path: Union[str, Path]) -> pd.DataFrame:
     for col in ['open', 'high', 'low', 'close', 'volume']:
         df[col] = pd.to_numeric(df[col], errors='coerce')
     
+    # Add returns-based features for better prediction
+    for col in ['open', 'high', 'low', 'close']:
+        df[f'{col}_return'] = df[col].pct_change()
+    
+    # Calculate log returns which have better statistical properties
+    df['log_return'] = np.log(df['close'] / df['close'].shift(1))
+    
+    # Create normalized price feature
+    window_size = 20
+    df['norm_price'] = (df['close'] - df['close'].rolling(window_size).mean()) / df['close'].rolling(window_size).std()
+    
     # Handle missing values
-    df = df.fillna(method='ffill')
+    df = df.fillna(method='ffill').fillna(0)
     
     # Sort by timestamp
     df = df.sort_index()
@@ -187,10 +198,9 @@ def create_training_sequences(
     lookback_window: int, 
     prediction_horizon: int, 
     feature_columns: List[str],
-    target_column: str = 'close',
+    target_column: str = 'close_return',  # Changed default to returns
     overlap: bool = True,
     normalize: bool = True,
-
 ) -> Tuple[np.ndarray, np.ndarray]:
     """
     Create sequences of data for training machine learning models.
@@ -213,12 +223,12 @@ def create_training_sequences(
         print(f"WARNING: Limiting feature count from {actual_feature_count} to 36 to match model architecture")
         feature_columns = feature_columns[:36]
   
-        # Make sure all requested features exist in the dataframe
+    # Make sure all requested features exist in the dataframe
     missing_features = [col for col in feature_columns if col not in df.columns]
     if missing_features:
         raise ValueError(f"Missing features in dataframe: {missing_features}")
     
-     # Ensure all feature columns are numeric
+    # Ensure all feature columns are numeric
     for col in feature_columns + [target_column]:
         if not pd.api.types.is_numeric_dtype(df[col]):
             df[col] = pd.to_numeric(df[col], errors='coerce')
@@ -231,8 +241,19 @@ def create_training_sequences(
     for i in range(0, len(data) - lookback_window - prediction_horizon + 1, step):
         # Extract sequence
         sequence = data[i:(i + lookback_window), :-1]  # Features
-        target = data[i + lookback_window:i + lookback_window + prediction_horizon, -1]  # Target
         
+        # For target, we can use different approaches:
+        if target_column in ['close_return', 'log_return']:
+            # If using returns-based prediction (recommended)
+            target = data[i + lookback_window:i + lookback_window + prediction_horizon, -1]
+        else:
+            # For price targets, normalize based on the lookback window
+            target_data = data[i + lookback_window:i + lookback_window + prediction_horizon, -1]
+            
+            # Normalize target relative to last price in lookback window
+            last_price = data[i + lookback_window - 1, -1]
+            target = (target_data - last_price) / last_price  # Convert to percentage change from last seen price
+            
         # Normalize sequence if requested
         if normalize:
             # Z-score normalization for each feature

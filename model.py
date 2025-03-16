@@ -99,8 +99,7 @@ class DeepLearningModel:
                 model.add(BatchNormalization())
                 model.add(Dropout(self.dropout_rate))
 
-
-                # Final LSTM layer - do NOT return sequence, so that output shape is (batch_size, units)
+            # Final LSTM layer - do NOT return sequence, so that output shape is (batch_size, units)
             model.add(LSTM(
                 self.hidden_layers[-1],
                 return_sequences=False,
@@ -123,11 +122,11 @@ class DeepLearningModel:
         
         # Final dense layers
         if len(self.hidden_layers) > 1:
-            model.add(Dense(self.hidden_layers[-1], activation='relu'))
+            model.add(Dense(self.hidden_layers[-1] // 2, activation='relu'))
             model.add(BatchNormalization())
             model.add(Dropout(self.dropout_rate))
         
-        # Output layer
+        # Output layer - use linear activation for regression tasks
         model.add(Dense(self.output_dim, activation='linear'))
         
         return model
@@ -316,7 +315,7 @@ class DeepLearningModel:
         # self.input_shape is a tuple like (lookback_window, num_features)
         num_features = self.input_shape[1]
 
-            # Adjust hidden layer sizes based on feature count if needed
+        # Adjust hidden layer sizes based on feature count if needed
         if num_features > 50:
             # For high-dimensional inputs, use larger hidden layers
             adjusted_hidden_layers = [int(size * 1.5) for size in self.hidden_layers]
@@ -328,8 +327,7 @@ class DeepLearningModel:
             self.hidden_layers = adjusted_hidden_layers
             logger.info(f"Adjusted hidden layers for small feature set: {self.hidden_layers}")
             
-          # Build model based on selected type
-
+        # Build model based on selected type
         if self.model_type == 'lstm':
             self.model = self._build_lstm_model()
         elif self.model_type == 'gru':
@@ -343,10 +341,10 @@ class DeepLearningModel:
         else:
             raise ValueError(f"Unsupported model type: {self.model_type}")
         
-        # Compile model
+        # Compile model with Huber loss - better for financial data with outliers
         self.model.compile(
             optimizer=Adam(learning_rate=self.learning_rate),
-            loss=Huber(),
+            loss=Huber(),  # Changed from MSE to Huber
             metrics=['mae', 'mse']
         )
         
@@ -402,7 +400,7 @@ class DeepLearningModel:
                 monitor='val_loss',
                 patience=max(5, EARLY_STOPPING_PATIENCE // 2),  # More aggressive early stopping
                 restore_best_weights=True,
-                min_delta=0.001  # Minimum improvement required
+                min_delta=0.0005  # Minimum improvement required (0.05%)
             ))
             
             # Reduce learning rate on plateau with more aggressive settings
@@ -432,16 +430,6 @@ class DeepLearningModel:
                     save_weights_only=False,
                     verbose=1
                 ))
-        
-        # Try using mixed precision for better performance
-        try:
-            # Try using mixed precision (faster on some hardware)
-            from tensorflow.keras import mixed_precision
-            policy = mixed_precision.Policy('mixed_float16')
-            mixed_precision.set_global_policy(policy)
-            logger.info("Using mixed precision training for better performance")
-        except:
-            logger.info("Mixed precision training not available, using default precision")
         
         # Train the model - without multiprocessing parameters which may not be supported
         history = self.model.fit(

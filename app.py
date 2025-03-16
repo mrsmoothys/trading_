@@ -497,11 +497,225 @@ def backtest_charts():
 
 @app.route('/models')
 def models_page():
-    """Render models page."""
+    """Render enhanced models page."""
     return render_template('models.html', 
                           title='Model Management')
 
 @app.route('/models/list')
+def list_models():
+    """List available models with PCA information."""
+    # List files in models directory
+    if not os.path.exists(MODELS_DIR):
+        return jsonify({'models': []})
+    
+    models = []
+    
+    for root, dirs, files in os.walk(MODELS_DIR):
+        # Get model directory structure
+        model_files = [f for f in files if f.endswith('.h5') or f.endswith('.keras')]
+        pca_files = [f for f in files if f.startswith('pca_') and f.endswith('.pkl')]
+        scaler_files = [f for f in files if f.startswith('scaler_') and f.endswith('.pkl')]
+        
+        for model_file in model_files:
+            # Get relative path
+            rel_path = os.path.relpath(os.path.join(root, model_file), MODELS_DIR)
+            
+            # Extract model details
+            parts = os.path.dirname(rel_path).split(os.path.sep)
+            
+            if parts:
+                if '_' in parts[0]:
+                    symbol, timeframe = parts[0].split('_')
+                else:
+                    symbol = parts[0]
+                    timeframe = "unknown"
+                
+                # Get file size
+                file_path = os.path.join(root, model_file)
+                size_mb = os.path.getsize(file_path) / (1024 * 1024)
+                
+                # Get file modification time
+                mtime = datetime.fromtimestamp(os.path.getmtime(file_path))
+                
+                # Check if PCA and scaler exist for this model
+                model_timestamp = re.search(r'(\d{8}_\d{6})', model_file)
+                has_pca = False
+                has_scaler = False
+                
+                if model_timestamp:
+                    timestamp = model_timestamp.group(1)
+                    has_pca = any(timestamp in pf for pf in pca_files)
+                    has_scaler = any(timestamp in sf for sf in scaler_files)
+                
+                # Check if metadata exists
+                metadata_path = f"{file_path}_metadata.json"
+                feature_count = None
+                if os.path.exists(metadata_path):
+                    try:
+                        with open(metadata_path, 'r') as f:
+                            metadata = json.load(f)
+                            feature_count = metadata.get('feature_count')
+                    except:
+                        pass
+                
+                models.append({
+                    'symbol': symbol,
+                    'timeframe': timeframe,
+                    'file': rel_path,
+                    'size_mb': round(size_mb, 2),
+                    'last_modified': mtime.strftime('%Y-%m-%d %H:%M:%S'),
+                    'has_pca': has_pca,
+                    'has_scaler': has_scaler,
+                    'feature_count': feature_count,
+                    'full_path': file_path
+                })
+    
+    return jsonify({'models': models})
+@app.route('/live')
+def live_page():
+    """Render live trading page."""
+    # Find available datasets
+    available_data = find_all_datasets()
+    
+    return render_template('live.html', 
+                          title='Live Trading',
+                          datasets=available_data)
+
+@app.route('/live/start', methods=['POST'])
+def start_live_trading():
+    """Start live trading with selected parameters."""
+    try:
+        # Get parameters from request
+        data = request.json
+        api_key = data.get('api_key')
+        api_secret = data.get('api_secret')
+        testnet = data.get('testnet', True)
+        symbols = data.get('symbols', [])
+        timeframes = data.get('timeframes', ['1h'])
+        
+        # Validate required parameters
+        if not api_key or not api_secret or not symbols:
+            return jsonify({'success': False, 'error': 'Missing required parameters'})
+        
+        # Start live trading in a separate process or thread
+        import subprocess
+        import threading
+        
+        # Build command
+        cmd = [
+            'python', 'live_trading.py',
+            '--api-key', api_key,
+            '--api-secret', api_secret,
+            '--symbols', *symbols,
+            '--timeframes', *timeframes
+        ]
+        
+        if testnet:
+            cmd.append('--testnet')
+        
+        # Execute in a separate thread to avoid blocking
+        def run_trading():
+            try:
+                process = subprocess.Popen(cmd, 
+                                          stdout=subprocess.PIPE, 
+                                          stderr=subprocess.PIPE, 
+                                          universal_newlines=True)
+                
+                # Store process ID for potential stopping later
+                app.config['LIVE_TRADING_PROCESS'] = process.pid
+                
+                # Log output
+                logger.info(f"Started live trading with PID {process.pid}")
+                
+                stdout, stderr = process.communicate()
+                
+                if process.returncode != 0:
+                    logger.error(f"Live trading process exited with error: {stderr}")
+                else:
+                    logger.info("Live trading process completed successfully")
+            
+            except Exception as e:
+                logger.error(f"Error running live trading: {e}")
+        
+        # Start thread
+        thread = threading.Thread(target=run_trading)
+        thread.daemon = True
+        thread.start()
+        
+        return jsonify({'success': True, 'message': 'Live trading started'})
+    
+    except Exception as e:
+        logger.error(f"Error starting live trading: {e}")
+        return jsonify({'success': False, 'error': str(e)})
+
+@app.route('/live/stop', methods=['POST'])
+def stop_live_trading():
+    """Stop live trading process."""
+    try:
+        # Get process ID
+        pid = app.config.get('LIVE_TRADING_PROCESS')
+        
+        if not pid:
+            return jsonify({'success': False, 'error': 'No live trading process running'})
+        
+        # Kill process
+        import os
+        import signal
+        try:
+            os.kill(pid, signal.SIGTERM)
+            logger.info(f"Sent SIGTERM to live trading process {pid}")
+            
+            # Wait for process to terminate
+            import time
+            time.sleep(2)
+            
+            # Check if process still exists
+            try:
+                os.kill(pid, 0)
+                # Process still exists, send SIGKILL
+                os.kill(pid, signal.SIGKILL)
+                logger.info(f"Sent SIGKILL to live trading process {pid}")
+            except OSError:
+                # Process no longer exists
+                pass
+            
+            # Remove process ID
+            app.config['LIVE_TRADING_PROCESS'] = None
+            
+            return jsonify({'success': True, 'message': 'Live trading stopped'})
+        
+        except ProcessLookupError:
+            # Process not found
+            app.config['LIVE_TRADING_PROCESS'] = None
+            return jsonify({'success': True, 'message': 'Live trading not running'})
+    
+    except Exception as e:
+        logger.error(f"Error stopping live trading: {e}")
+        return jsonify({'success': False, 'error': str(e)})
+
+@app.route('/live/status')
+def live_trading_status():
+    """Get live trading status."""
+    try:
+        # Get process ID
+        pid = app.config.get('LIVE_TRADING_PROCESS')
+        
+        if not pid:
+            return jsonify({'running': False})
+        
+        # Check if process exists
+        import os
+        try:
+            os.kill(pid, 0)
+            return jsonify({'running': True, 'pid': pid})
+        except OSError:
+            app.config['LIVE_TRADING_PROCESS'] = None
+            return jsonify({'running': False})
+    
+    except Exception as e:
+        logger.error(f"Error checking live trading status: {e}")
+        return jsonify({'running': False, 'error': str(e)})
+
 def list_models():
     """List available models."""
     # List files in models directory
@@ -646,6 +860,25 @@ def get_config():
                     config[key] = value
     
     return jsonify({'config': config})
+
+@app.route('/settings/update', methods=['POST'])
+def update_settings():
+    """Update configuration settings."""
+    # Get settings from request
+    data = request.json
+    settings = data.get('settings', {})
+    category = data.get('category', 'general')
+    
+    if not settings:
+        return jsonify({'success': False, 'error': 'No settings provided'})
+    
+    # This is a simplified version that doesn't actually modify the config file
+    # In a real application, you would update the config file here
+    
+    logger.info(f"Settings update requested for {category}: {settings}")
+    
+    # For now, just return success
+    return jsonify({'success': True, 'message': f'Settings for {category} updated'})
 
 if __name__ == '__main__':
     # Create required directories

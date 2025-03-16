@@ -617,47 +617,52 @@ class TradingStrategy:
         if self.data is None:
             raise ValueError("Data not set. Call set_data() first.")
         
-        # Add signal column
+            # Add signal column
         signals = self.data.copy()
         signals['signal'] = 0
-        
-        # Get feature columns
-        feature_columns = [col for col in signals.columns if col not in ['open', 'high', 'low', 'close', 'volume', 'signal']]
-        
-        # Limit features to match model input shape
-        expected_features = self.model.input_shape[2]
-        if len(feature_columns) > expected_features:
-            logger.warning(f"Limiting features from {len(feature_columns)} to {expected_features} to match model")
-            feature_columns = feature_columns[:expected_features]
-        
-        # Generate predictions
-        for i in range(self.lookback_window, len(signals)):
-            # Create input sequence
-            sequence = signals[feature_columns].iloc[i-self.lookback_window:i].values
             
-            # Normalize sequence
-            mean = np.mean(sequence, axis=0)
-            std = np.std(sequence, axis=0)
-            std = np.where(std == 0, 1e-8, std)
-            normalized_sequence = (sequence - mean) / std
+            # Get feature columns
+        if hasattr(self, 'pca_model') and self.pca_model is not None:
+            # Use PCA components directly if available
+            feature_columns = [col for col in signals.columns if col.startswith('pc_')]
+            logger.info(f"Using {len(feature_columns)} PCA components for signal generation")
+        else:
+            feature_columns = [col for col in signals.columns if col not in ['open', 'high', 'low', 'close', 'volume', 'signal']]
             
-            # Reshape for model input
-            X = np.expand_dims(normalized_sequence, axis=0)
+            # Limit features to match model input shape
+            expected_features = self.model.input_shape[2]
+            if len(feature_columns) > expected_features:
+                logger.warning(f"Limiting features from {len(feature_columns)} to {expected_features} to match model")
+                feature_columns = feature_columns[:expected_features]
             
-            # Make prediction
-            pred = self.model.predict(X)[0]
+            # Generate predictions
+            for i in range(self.lookback_window, len(signals)):
+                # Create input sequence
+                sequence = signals[feature_columns].iloc[i-self.lookback_window:i].values
+                
+                # Normalize sequence
+                mean = np.mean(sequence, axis=0)
+                std = np.std(sequence, axis=0)
+                std = np.where(std == 0, 1e-8, std)
+                normalized_sequence = (sequence - mean) / std
+                
+                # Reshape for model input
+                X = np.expand_dims(normalized_sequence, axis=0)
+                
+                # Make prediction
+                pred = self.model.predict(X)[0]
+                
+                # Generate signal from prediction
+                current_price = signals['close'].iloc[i]
+                predicted_price = pred[-1]
+                predicted_return = (predicted_price / current_price) - 1
+                
+                if predicted_return > self.threshold:
+                    signals.loc[signals.index[i], 'signal'] = 1
+                elif predicted_return < -self.threshold:
+                    signals.loc[signals.index[i], 'signal'] = -1
             
-            # Generate signal from prediction
-            current_price = signals['close'].iloc[i]
-            predicted_price = pred[-1]
-            predicted_return = (predicted_price / current_price) - 1
-            
-            if predicted_return > self.threshold:
-                signals.loc[signals.index[i], 'signal'] = 1
-            elif predicted_return < -self.threshold:
-                signals.loc[signals.index[i], 'signal'] = -1
-        
-        return signals
+            return signals
     
     def backtest(self, data: pd.DataFrame) -> Dict[str, Any]:
         """
@@ -811,25 +816,36 @@ class MLTradingStrategy(TradingStrategy):
         self.prediction_horizon = prediction_horizon
         self.threshold = threshold
 
-    def set_data(self, data: pd.DataFrame, **kwargs) -> None:
+    # In the MLTradingStrategy class in strategy.py:
+
+    def set_data(self, data: pd.DataFrame, pca_model=None, scaler_model=None) -> None:
         """
-        Set the market data for the strategy with optional PCA transformation.
+        Set the market data for the strategy.
         
         Args:
             data: Market data as pandas DataFrame
-            **kwargs: Additional keyword arguments including:
-                - pca_model: Optional PCA model for transformation
-                - scaler_model: Optional scaler model for standardization
+            pca_model: Optional PCA model for feature transformation
+            scaler_model: Optional scaler model for feature standardization
         """
-        # Call the parent implementation first
-        super().set_data(data)
+        self.data = data.copy()
         
-        # Apply PCA transformation if models are provided
-        pca_model = kwargs.get('pca_model')
-        scaler_model = kwargs.get('scaler_model')
+        # Store PCA and scaler models if provided
+        self.pca_model = pca_model
+        self.scaler_model = scaler_model
         
-        if pca_model is not None and scaler_model is not None:
-            self._transform_features_with_pca(pca_model, scaler_model)
+        # Reset position and performance tracking
+        self.position = Position.FLAT
+        self.current_order = None
+        self.orders = []
+        self.trades = []
+        self.equity_curve = [self.initial_capital]
+        self.drawdowns = [0.0]
+        self.returns = [0.0]
+        
+        # Set initial market state
+        self.current_index = 0
+        self.current_timestamp = self.data.index[0]
+        self.current_price = self.data['close'].iloc[0]
 
     def _transform_features_with_pca(self, pca_model, scaler_model):
         """
@@ -884,14 +900,8 @@ class MLTradingStrategy(TradingStrategy):
         except Exception as e:
             logger.error(f"Error applying PCA transformation: {e}")
             # Continue with original data if transformation fails
-    
     def generate_signals(self) -> pd.DataFrame:
-        """
-        Generate trading signals from model predictions.
-        
-        Returns:
-            DataFrame with added signal column
-        """
+        """Generate trading signals from model predictions."""
         if self.data is None:
             raise ValueError("Data not set. Call set_data() first.")
         
@@ -899,37 +909,33 @@ class MLTradingStrategy(TradingStrategy):
         signals = self.data.copy()
         signals['signal'] = 0
         
+        # Get feature columns
+        if hasattr(self, 'pca_model') and self.pca_model is not None:
+            # Use PCA components directly if available
+            feature_columns = [col for col in signals.columns if col.startswith('pc_')]
+            logger.info(f"Using {len(feature_columns)} PCA components for signal generation")
+        else:
+            feature_columns = [col for col in signals.columns if col not in ['open', 'high', 'low', 'close', 'volume', 'signal']]
+        
         # Need at least lookback_window candles for prediction
         if len(signals) <= self.lookback_window:
             return signals
         
-        # Check if we're using PCA components
-        pca_cols = [col for col in signals.columns if col.startswith('pc_')]
-        
-        if pca_cols:
-            # We're using PCA - only use the PCA components for prediction
-            feature_columns = pca_cols
-            logger.info(f"Using {len(feature_columns)} PCA components for signal generation")
-        else:
-            # Standard mode - get all non-OHLCV columns
-            feature_columns = [col for col in signals.columns 
-                            if col not in ['open', 'high', 'low', 'close', 'volume', 'signal']]
-        
         # Check model input shape compatibility
-        model_input_dim = 30  # Hard-coded to match our fixed PCA components
+        required_features = self.model.input_shape[2]
         
-        if len(feature_columns) != model_input_dim:
-            logger.warning(f"Feature count mismatch: model expects {model_input_dim} features, "
-                        f"but {len(feature_columns)} are available")
-            
-            # Adjust feature count to match model expectations
-            if len(feature_columns) > model_input_dim:
-                logger.warning(f"Truncating features to match model input shape")
-                feature_columns = feature_columns[:model_input_dim]
-            else:
-                # Not enough features
-                logger.error(f"Insufficient features for model input")
-                return signals
+        if len(feature_columns) < required_features:
+            # Handle fewer features than expected
+            logger.warning(f"Insufficient features: model expects {required_features}, but only {len(feature_columns)} available")
+            # Add dummy features to match the expected count
+            for i in range(len(feature_columns), required_features):
+                feature_name = f"dummy_{i}"
+                signals[feature_name] = 0.0
+                feature_columns.append(feature_name)
+        elif len(feature_columns) > required_features:
+            # Handle more features than expected
+            logger.warning(f"Limiting features from {len(feature_columns)} to {required_features} to match model")
+            feature_columns = feature_columns[:required_features]
         
         # Generate predictions for each candle
         for i in range(self.lookback_window, len(signals)):
@@ -1067,7 +1073,7 @@ class EnsembleTradingStrategy(TradingStrategy):
     
     def generate_signals(self) -> pd.DataFrame:
         """
-        Generate trading signals by combining signals from all strategies.
+        Generate trading signals from model predictions.
         
         Returns:
             DataFrame with added signal column
@@ -1079,81 +1085,121 @@ class EnsembleTradingStrategy(TradingStrategy):
         signals = self.data.copy()
         signals['signal'] = 0
         
-        # Generate signals for each strategy
-        all_signals = []
-        for i, strategy in enumerate(self.strategies):
-            strategy_signals = strategy.generate_signals()
-            all_signals.append(strategy_signals['signal'] * self.weights[i])
+        # Check if we're using PCA components
+        pca_cols = [col for col in signals.columns if col.startswith('pc_')]
         
-        # Combine signals
-        combined_signal = sum(all_signals)
+        if pca_cols:
+            # We're using PCA - only use the PCA components for prediction
+            feature_columns = pca_cols
+            logger.info(f"Using {len(feature_columns)} PCA components for signal generation")
+        else:
+            # Standard mode - get all non-OHLCV columns
+            feature_columns = [col for col in signals.columns 
+                            if col not in ['open', 'high', 'low', 'close', 'volume', 'signal']]
         
-        # Discretize combined signal
-        signals['signal'] = np.where(
-            combined_signal > 0.2, 1,  # Strong buy signal
-            np.where(
-                combined_signal < -0.2, -1,  # Strong sell signal
-                0  # Neutral signal
-            )
-        )
+        # Need at least lookback_window candles for prediction
+        if len(signals) <= self.lookback_window:
+            return signals
+        
+        # Generate predictions for each candle
+        for i in range(self.lookback_window, len(signals)):
+            try:
+                # Get lookback window for features
+                window_data = signals[feature_columns].iloc[i-self.lookback_window:i].values
+                
+                # Normalize data
+                mean = np.mean(window_data, axis=0)
+                std = np.std(window_data, axis=0)
+                std = np.where(std == 0, 1e-8, std)  # Avoid division by zero
+                window_data_norm = (window_data - mean) / std
+                
+                # Reshape for model input (add batch dimension)
+                X = np.expand_dims(window_data_norm, axis=0)
+                
+                # Get prediction
+                pred = self.model.predict(X, verbose=0)[0]
+                
+                # If model predicts returns, convert to price prediction
+                if 'close_return' in signals.columns:
+                    current_price = signals['close'].iloc[i]
+                    # Convert predicted returns to predicted prices
+                    predicted_returns = pred
+                    predicted_price = current_price * (1 + predicted_returns[0])  # Using first prediction
+                    
+                    # Calculate predicted return from current to predicted
+                    predicted_return = (predicted_price / current_price) - 1
+                else:
+                    # Direct price prediction model
+                    current_price = signals['close'].iloc[i]
+                    predicted_price = pred[0]  # First value in prediction horizon
+                    predicted_return = (predicted_price / current_price) - 1
+                
+                # Generate signal based on predicted return and threshold
+                if predicted_return > self.threshold:
+                    signals.loc[signals.index[i], 'signal'] = 1
+                elif predicted_return < -self.threshold:
+                    signals.loc[signals.index[i], 'signal'] = -1
+            except Exception as e:
+                logger.error(f"Error generating signal at index {i}: {e}")
+                # Continue to next candle
         
         return signals
-
-if __name__ == "__main__":
-    # Test the strategy
-    from datetime import timedelta
     
-    # Set up logging
-    logging.basicConfig(level=logging.INFO)
-    
-    # Create sample data
-    dates = pd.date_range(start="2023-01-01", periods=100, freq="H")
-    data = pd.DataFrame({
-        "open": np.random.normal(100, 1, 100),
-        "high": np.random.normal(101, 1, 100),
-        "low": np.random.normal(99, 1, 100),
-        "close": np.random.normal(100, 1, 100),
-        "volume": np.random.normal(1000, 100, 100)
-    }, index=dates)
-    
-    # Create ATR for adaptive SL/TP
-    data['atr'] = pd.Series(np.random.normal(1, 0.1, 100), index=dates)
-    
-    # Create swing points for testing
-    data['swing_high'] = np.zeros(100)
-    data['swing_low'] = np.zeros(100)
-    data.loc[data.index[20], 'swing_high'] = 1
-    data.loc[data.index[40], 'swing_low'] = 1
-    data.loc[data.index[60], 'swing_high'] = 1
-    data.loc[data.index[80], 'swing_low'] = 1
-    
-    # Create a dummy strategy for testing
-    class DummyStrategy(TradingStrategy):
-        def generate_signals(self):
-            signals = self.data.copy()
-            signals['signal'] = 0
-            
-            # Buy signal every 10 candles, sell every 5 candles
-            for i in range(len(signals)):
-                if i % 10 == 0:
-                    signals.loc[signals.index[i], 'signal'] = 1
-                elif i % 5 == 0:
-                    signals.loc[signals.index[i], 'signal'] = -1
-            
-            return signals
-    
-    # Create strategy
-    strategy = DummyStrategy("BTCUSDT", "1h", adaptive_sl_tp=True, trailing_stop=True)
-    
-    # Run backtest
-    results = strategy.backtest(data)
-    
-    # Print performance
-    print("Performance:")
-    for key, value in results['performance'].items():
-        print(f"{key}: {value}")
-    
-    # Print trades
-    print("\nTrades:")
-    for trade in results['trades'][:3]:  # Show first 3 trades
-        print(trade)
+    if __name__ == "__main__":
+        # Test the strategy
+        from datetime import timedelta
+        
+        # Set up logging
+        logging.basicConfig(level=logging.INFO)
+        
+        # Create sample data
+        dates = pd.date_range(start="2023-01-01", periods=100, freq="H")
+        data = pd.DataFrame({
+            "open": np.random.normal(100, 1, 100),
+            "high": np.random.normal(101, 1, 100),
+            "low": np.random.normal(99, 1, 100),
+            "close": np.random.normal(100, 1, 100),
+            "volume": np.random.normal(1000, 100, 100)
+        }, index=dates)
+        
+        # Create ATR for adaptive SL/TP
+        data['atr'] = pd.Series(np.random.normal(1, 0.1, 100), index=dates)
+        
+        # Create swing points for testing
+        data['swing_high'] = np.zeros(100)
+        data['swing_low'] = np.zeros(100)
+        data.loc[data.index[20], 'swing_high'] = 1
+        data.loc[data.index[40], 'swing_low'] = 1
+        data.loc[data.index[60], 'swing_high'] = 1
+        data.loc[data.index[80], 'swing_low'] = 1
+        
+        # Create a simple test strategy
+        class TestStrategy(TradingStrategy):
+            def generate_signals(self):
+                signals = self.data.copy()
+                signals['signal'] = 0
+                
+                # Buy signal every 10 candles, sell every 5 candles
+                for i in range(len(signals)):
+                    if i % 10 == 0:
+                        signals.loc[signals.index[i], 'signal'] = 1
+                    elif i % 5 == 0:
+                        signals.loc[signals.index[i], 'signal'] = -1
+                
+                return signals
+        
+        # Create strategy
+        strategy = TestStrategy("BTCUSDT", "1h", adaptive_sl_tp=True, trailing_stop=True)
+        
+        # Run backtest
+        results = strategy.backtest(data)
+        
+        # Print performance
+        print("Performance:")
+        for key, value in results['performance'].items():
+            print(f"{key}: {value}")
+        
+        # Print trades
+        print("\nTrades:")
+        for trade in results['trades'][:3]:  # Show first 3 trades
+            print(trade)
