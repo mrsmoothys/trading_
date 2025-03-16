@@ -1,0 +1,33 @@
+{
+  "performance": {
+    "initial_capital": 10000,
+    "final_capital": 7687.607794603355,
+    "total_return": -23.12392205396645,
+    "num_trades": 625,
+    "win_rate": 35.199999999999996,
+    "avg_profit": 4.558455688133806,
+    "avg_loss": -2.8132298673564744,
+    "profit_factor": 0.7908895083817563,
+    "max_drawdown": 26.89251014553941,
+    "sharpe_ratio": -0.36363570459775457,
+    "sortino_ratio": -0.46800496934779157
+  },
+  "trades_count": 625,
+  "config": {
+    "symbol": "BTCUSDT",
+    "timeframe": "1h",
+    "lookback": 100,
+    "horizon": 5,
+    "threshold": 0.005,
+    "model_type": "lstm",
+    "hidden_layers": [
+      128,
+      64,
+      32
+    ],
+    "position_size": 0.1,
+    "initial_capital": 10000,
+    "fee": 0.0002,
+    "slippage": 0.002
+  }
+}

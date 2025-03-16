@@ -1,0 +1,8 @@
+{
+  "model_type": "lstm",
+  "n_layers": 1,
+  "units_layer_0": 177,
+  "dropout_rate": 0.43363639504705503,
+  "learning_rate": 0.004905973215645068,
+  "batch_size": 21
+}
