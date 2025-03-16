@@ -136,7 +136,7 @@ class DeepLearningModel:
         """Build GRU model architecture."""
         model = Sequential()
         
-         # Determine if we have multiple GRU layers
+        # Determine if we have multiple GRU layers
         num_layers = len(self.hidden_layers)
 
         # First GRU layer
@@ -144,7 +144,7 @@ class DeepLearningModel:
             model.add(GRU(
                 self.hidden_layers[0],
                 input_shape=self.input_shape,
-                return_sequences=False,  # Force this to False for now
+                return_sequences=True,  # Change to True for multi-layer networks
                 activation='tanh',
                 recurrent_activation='sigmoid'
             ))
@@ -159,13 +159,22 @@ class DeepLearningModel:
         model.add(BatchNormalization())
         model.add(Dropout(self.dropout_rate))
 
-            # Add any additional GRU layers
-        for idx, units in enumerate(self.hidden_layers[1:], start=1):
-            # For intermediate layers, return sequences; for the final layer, not.
-            return_seq = True if idx < num_layers - 1 else False
+        # Add intermediate GRU layers
+        for idx in range(1, num_layers - 1):
             model.add(GRU(
-                units,
-                return_sequences=True, #changed from return_sequences ==
+                self.hidden_layers[idx],
+                return_sequences=True,
+                activation='tanh',
+                recurrent_activation='sigmoid'
+            ))
+            model.add(BatchNormalization())
+            model.add(Dropout(self.dropout_rate))
+        
+        # Add final GRU layer (if we have more than one layer)
+        if num_layers > 1:
+            model.add(GRU(
+                self.hidden_layers[-1],
+                return_sequences=False,
                 activation='tanh',
                 recurrent_activation='sigmoid'
             ))
@@ -173,10 +182,9 @@ class DeepLearningModel:
             model.add(Dropout(self.dropout_rate))
         
         # Final dense layers
-        if len(self.hidden_layers) > 1:
-            model.add(Dense(self.hidden_layers[-1], activation='relu'))
-            model.add(BatchNormalization())
-            model.add(Dropout(self.dropout_rate))
+        model.add(Dense(self.hidden_layers[-1] // 2, activation='relu'))
+        model.add(BatchNormalization())
+        model.add(Dropout(self.dropout_rate))
         
         # Output layer
         model.add(Dense(self.output_dim, activation='linear'))
@@ -354,10 +362,11 @@ class DeepLearningModel:
         epochs: int = EPOCHS,
         batch_size: int = BATCH_SIZE,
         callbacks: List[tf.keras.callbacks.Callback] = None,
-        save_path: Optional[str] = None
+        save_path: Optional[str] = None,
+        optimize_for_hardware: bool = True
     ) -> Dict[str, List[float]]:
         """
-        Train the model.
+        Train the model with hardware optimizations.
         
         Args:
             X_train: Training features
@@ -368,6 +377,7 @@ class DeepLearningModel:
             batch_size: Batch size for training
             callbacks: List of Keras callbacks
             save_path: Path to save the model
+            optimize_for_hardware: Whether to optimize for current hardware
             
         Returns:
             Training history
@@ -375,33 +385,42 @@ class DeepLearningModel:
         if self.model is None:
             raise ValueError("Model not initialized. Call build_model() first.")
         
+        # Apply hardware optimization if requested
+        if optimize_for_hardware:
+            optimal_batch = self.optimize_for_hardware()
+            batch_size = min(batch_size, optimal_batch)
+            logger.info(f"Using batch size of {batch_size} based on hardware optimization")
+        
         logger.info(f"Training {self.model_type} model with {len(X_train)} samples")
         
         # Create callbacks if not provided
         if callbacks is None:
             callbacks = []
             
-            # Early stopping
+            # Early stopping with more aggressive settings
             callbacks.append(EarlyStopping(
                 monitor='val_loss',
-                patience=EARLY_STOPPING_PATIENCE,
-                restore_best_weights=True
+                patience=max(5, EARLY_STOPPING_PATIENCE // 2),  # More aggressive early stopping
+                restore_best_weights=True,
+                min_delta=0.001  # Minimum improvement required
             ))
             
-            # Reduce learning rate on plateau
+            # Reduce learning rate on plateau with more aggressive settings
             callbacks.append(ReduceLROnPlateau(
                 monitor='val_loss',
                 factor=0.5,
-                patience=EARLY_STOPPING_PATIENCE // 2,
-                min_lr=1e-6
+                patience=max(3, EARLY_STOPPING_PATIENCE // 3),  # More aggressive LR reduction
+                min_lr=1e-6,
+                verbose=1
             ))
             
-            # TensorBoard logging
-            log_dir = os.path.join('logs', f"{self.model_type}_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}")
-            callbacks.append(TensorBoard(
-                log_dir=log_dir,
-                histogram_freq=1
-            ))
+            # TensorBoard logging (optional for performance)
+            if int(os.environ.get('ENABLE_TENSORBOARD', '0')):
+                log_dir = os.path.join('logs', f"{self.model_type}_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}")
+                callbacks.append(TensorBoard(
+                    log_dir=log_dir,
+                    histogram_freq=1
+                ))
             
             # Save best model
             if save_path:
@@ -414,7 +433,17 @@ class DeepLearningModel:
                     verbose=1
                 ))
         
-        # Train the model
+        # Try using mixed precision for better performance
+        try:
+            # Try using mixed precision (faster on some hardware)
+            from tensorflow.keras import mixed_precision
+            policy = mixed_precision.Policy('mixed_float16')
+            mixed_precision.set_global_policy(policy)
+            logger.info("Using mixed precision training for better performance")
+        except:
+            logger.info("Mixed precision training not available, using default precision")
+        
+        # Train the model - without multiprocessing parameters which may not be supported
         history = self.model.fit(
             X_train, y_train,
             validation_data=(X_val, y_val),
@@ -544,6 +573,41 @@ class DeepLearningModel:
             logger.warning(f"No metadata found for model at {path}")
         
         return metadata
+    
+    def optimize_for_hardware(self):
+        """
+        Optimize model configuration for current hardware.
+        Adjusts batch size and other parameters for better performance.
+        """
+        import multiprocessing
+        import psutil
+        
+        # Get system information
+        cpu_count = multiprocessing.cpu_count()
+        memory_gb = psutil.virtual_memory().total / (1024 ** 3)
+        
+        # Log hardware information
+        logger.info(f"Optimizing for hardware: {cpu_count} CPU cores, {memory_gb:.1f} GB RAM")
+        
+        # Adjust batch size based on available memory
+        if memory_gb < 4:  # Low memory (<4GB)
+            optimal_batch = 16
+        elif memory_gb < 8:  # Medium memory (4-8GB)
+            optimal_batch = 32
+        else:  # High memory (>8GB)
+            optimal_batch = 64
+        
+        # Adjust based on CPU cores (more cores can handle larger batches)
+        if cpu_count <= 2:
+            optimal_batch = min(optimal_batch, 32)
+        
+        # Adjust model complexity based on available resources
+        if memory_gb < 4 or cpu_count <= 2:
+            # Reduce model complexity for low-resource machines
+            self.hidden_layers = [max(layer // 2, 16) for layer in self.hidden_layers]
+            logger.info(f"Reduced model complexity for low-resource machine: {self.hidden_layers}")
+        
+        return optimal_batch
 
 class ModelManager:
     """

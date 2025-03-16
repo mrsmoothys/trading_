@@ -565,7 +565,12 @@ def main():
     setup_logging(log_level=args.log_level)
     
     logger = logging.getLogger(__name__)
-    logger.info("Starting AI Trading Bot Single Run")
+    logger.info("Starting AI Trading Bot Single Run with performance optimizations")
+
+    # Configure memory and GPU limits
+    from utils import check_memory_usage, limit_gpu_memory
+    limit_gpu_memory(allow_growth=True)
+    check_memory_usage(threshold_gb=0.8, clear_if_high=True)
     
     # Print system information
     print_system_info()
@@ -601,11 +606,48 @@ def main():
             data = data[data.index >= args.start_date]
         if args.end_date:
             data = data[data.index <= args.end_date]
+
+
+        # For faster optimization, optionally use a smaller subset of data
+        if args.optimize_model and len(data) > 5000:
+            # If optimizing, consider using less data for faster iterations
+            logger.info(f"Using recent data subset for optimization (original size: {len(data)})")
+            data = data.iloc[-5000:]  # Use last 5000 rows for faster optimization
+            logger.info(f"Reduced data size to {len(data)} rows")
         
-       # Generate features with PCA reduction
-        logger.info("Generating features with PCA dimensionality reduction")
-        n_components = 30  # Set the number of components to match model expectations
+        # Generate features with optimized PCA
+        logger.info("Generating features with optimized PCA")
+        n_components = 30  # Default, will be optimized based on explained variance
+        variance_threshold = 0.95  # Use 95% explained variance threshold
         data, pca_model, scaler_model = generate_features(data, apply_pca=True, n_components=n_components)
+
+        # Get PCA components as feature columns
+        feature_columns = [col for col in data.columns if col.startswith('pc_')]
+       
+        # Pre-process all columns to ensure numeric types before PCA
+        for col in data.columns:
+            if col not in ['open', 'high', 'low', 'close', 'volume']:
+                try:
+                    # If column is string type or has string values, convert to numeric
+                    if data[col].dtype == object or pd.api.types.is_string_dtype(data[col]):
+                        logger.warning(f"Converting string column to numeric: {col}")
+                        data[col] = pd.to_numeric(data[col], errors='coerce')
+                except Exception as e:
+                    logger.warning(f"Could not process column {col}: {e}")
+                    # Remove problematic column as last resort
+                    data = data.drop(col, axis=1)
+
+        # Now apply PCA with clean data
+        try:
+            data, pca_model, scaler_model = generate_features(data, apply_pca=True, n_components=n_components)
+            # Now feature columns are simply the PCA components plus OHLCV
+            feature_columns = [col for col in data.columns if col.startswith('pc_')]
+        except Exception as e:
+            logger.error(f"Error in PCA reduction: {e}")
+            logger.info("Falling back to regular feature processing without PCA")
+            data = generate_features(data, apply_pca=False)
+            feature_columns = [col for col in data.columns if col not in ['open', 'high', 'low', 'close', 'volume']]
+
 
         # Now feature columns are simply the PCA components plus OHLCV
         feature_columns = [col for col in data.columns if col.startswith('pc_')]
@@ -613,6 +655,12 @@ def main():
         
         # Step 2: Split data for training and validation
         feature_columns = [col for col in data.columns if col not in ['open', 'high', 'low', 'close', 'volume']]
+
+        # Convert all feature columns to numeric
+        for col in feature_columns:
+            if data[col].dtype == object or not pd.api.types.is_numeric_dtype(data[col]):
+                logger.warning(f"Converting non-numeric column {col} to numeric")
+                data[col] = pd.to_numeric(data[col], errors='coerce')
            # FIXED: Ensure we use only the first 55 features to match model structure
         max_features = 36
         if len(feature_columns) > max_features:
@@ -637,6 +685,10 @@ def main():
         X_train, X_val, X_test, y_train, y_val, y_test = train_val_test_split(
             X, y, train_size=args.train_size, val_size=args.val_size
         )
+
+        # Check memory usage after data preparation
+        check_memory_usage(threshold_gb=0.8, clear_if_high=True)
+        
         
         # Step 3: Cross-validation if requested
         if args.cross_validation:
@@ -935,6 +987,10 @@ def main():
         logger.info(f"Sharpe Ratio: {backtest_results['performance']['sharpe_ratio']:.2f}")
         logger.info(f"Max Drawdown: {backtest_results['performance']['max_drawdown']:.2f}%")
         
+        # Final memory cleanup
+        check_memory_usage(threshold_gb=0.8, clear_if_high=True)
+
+
         logger.info("Single run completed successfully")
         
         return 0

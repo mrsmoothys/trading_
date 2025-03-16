@@ -79,8 +79,8 @@ LEARNING_RATE = 0.001
 
 # Optimization
 OPTIMIZATION_METRIC = "sharpe_ratio"  # Options: "sharpe_ratio", "sortino_ratio", "profit", "win_rate"
-OPTIMIZATION_TRIALS = 100
-CROSS_VALIDATION_FOLDS = 5
+OPTIMIZATION_TRIALS = 20
+CROSS_VALIDATION_FOLDS = 3
 
 # Stop loss/Take profit
 ADAPTIVE_SL_TP = True  # Use adaptive stop loss and take profit

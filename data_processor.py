@@ -218,6 +218,11 @@ def create_training_sequences(
     if missing_features:
         raise ValueError(f"Missing features in dataframe: {missing_features}")
     
+     # Ensure all feature columns are numeric
+    for col in feature_columns + [target_column]:
+        if not pd.api.types.is_numeric_dtype(df[col]):
+            df[col] = pd.to_numeric(df[col], errors='coerce')
+    
     data = df[feature_columns + [target_column]].values
     X, y = [], []
     

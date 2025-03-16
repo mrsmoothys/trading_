@@ -95,7 +95,25 @@ Additional options:
 --end-date 2021-12-31    # End date for analysis
 --detailed-backtest      # Run detailed backtest with additional analytics
 --cross-validation       # Perform cross-validation
-```
+--max-trials 100         # Maximum number of optimization trials
+--model-type lstm        # Model architecture (lstm, gru, cnn, transformer, ensemble)
+--lookahead 5            # Prediction horizon (number of candles to predict)
+--lookback 100           # Lookback window size
+--batch-size 32          # Training batch size
+--epochs 50              # Number of training epochs
+--learning-rate 0.001    # Learning rate for model training
+--dropout 0.2            # Dropout rate for regularization
+--hidden-layers 128 64   # Hidden layer sizes (space separated)
+--save-model             # Save the trained model
+--no-gpu                 # Disable GPU acceleration
+--feature-set minimal    # Feature set to use (minimal, standard, full)
+--pca-components 30      # Number of PCA components to use
+--test-size 0.2          # Size of test set (proportion)
+--val-size 0.15          # Size of validation set (proportion)
+--random-seed 42         # Random seed for reproducibility
+--plot-predictions       # Plot model predictions
+--export-results         # Export results to CSV
+--dashboard              # Generate HTML dashboard with results
 
 ### Batch Processing
 
@@ -434,7 +452,7 @@ Live trading started.
 ### Feature Engineering
 ```bash
 # Test feature generation
-python feature_engineering.py
+python feature_engineering.pyc
 ```
 
 ### Data Fetching
@@ -452,4 +470,6 @@ python run_single.py --data-path /Users/mrsmoothy/Desktop/rsidtrade/binance_data
 
 
 
-python run_single.py --data-path /Users/mrsmoothy/Desktop/rsidtrade/binance_data_sets/BTCUSDT_1h_data_2018_to_2025.csv --visualize
+python run_single.py --data-path /Users/mrsmoothy/Desktop/rsidtrade/binance_data_sets/BTCUSDT_1h_data_2021_to_2022.csv --optimize-model --visualize --save-model
+
+python run_single.py --data-path /Users/mrsmoothy/Desktop/rsidtrade/binance_data_sets/BTCUSDT_1h_data_2021_to_2022.csv  --optimize-model --opt-trials 15 --epochs 10 --batch-size 32 --visualize --save-model 
