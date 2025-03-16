@@ -917,63 +917,41 @@ def main():
             if 'pca_model' in locals() and 'scaler_model' in locals() and pca_model is not None and scaler_model is not None:
                 logger.info(f"Using existing PCA model from training for backtest")
                 
-                # Extract OHLCV data
-                ohlcv_data = backtest_data[['open', 'high', 'low', 'close', 'volume']]
-                
-                # Get feature data - IMPORTANT: Use the same original features from before PCA
-                if 'original_feature_columns' in locals() and len(original_feature_columns) > 0:
-                    # Filter to only include columns that actually exist in the data
-                    available_columns = [col for col in original_feature_columns if col in backtest_data.columns]
-                    if len(available_columns) < len(original_feature_columns):
-                        logger.warning(f"Only {len(available_columns)} of {len(original_feature_columns)} original features available in backtest data")
-                    
-                    feature_data = backtest_data[available_columns]
-                    logger.info(f"Using {len(available_columns)} original features for PCA transformation")
+                # Store the original feature columns used during PCA fitting
+                if hasattr(pca_model, 'feature_names_in_'):
+                    pca_original_features = list(pca_model.feature_names_in_)
+                    logger.info(f"Found {len(pca_original_features)} original features from PCA model")
+                elif 'original_feature_columns' in locals() and len(original_feature_columns) > 0:
+                    pca_original_features = original_feature_columns
+                    logger.info(f"Using {len(pca_original_features)} stored original features")
                 else:
-                    # Fall back to using all non-OHLCV columns
-                    feature_data = backtest_data[[col for col in backtest_data.columns 
-                                                if col not in ['open', 'high', 'low', 'close', 'volume']]]
-                    logger.info(f"No stored original features, using {len(feature_data.columns)} columns from data")
+                    # Fallback to using all non-OHLCV columns from the original data
+                    pca_original_features = [col for col in data.columns 
+                                            if col not in ['open', 'high', 'low', 'close', 'volume']]
+                    logger.info(f"Using {len(pca_original_features)} features from original data")
                 
-                try:
-                    # Handle missing or non-numeric values in feature data
-                    feature_data = feature_data.replace([np.inf, -np.inf], np.nan)
-                    feature_data = feature_data.fillna(feature_data.mean())
+                # Prepare consistent data for PCA transformation
+                from feature_engineering import prepare_data_for_pca_consistency
+                backtest_data = prepare_data_for_pca_consistency(
+                    data=backtest_data,
+                    scaler_model=scaler_model,
+                    pca_model=pca_model,
+                    original_features=pca_original_features
+                )
+                
+                # Set strategy data with PCA models
+                strategy.set_data(backtest_data, pca_model=pca_model, scaler_model=scaler_model)
+                
+                # Run backtest
+                if args.detailed_backtest:
+                    backtest_results = run_detailed_backtest(strategy=strategy, data=backtest_data, args=args)
+                else:
+                    backtest_results = strategy.backtest(backtest_data)
                     
-                    # Apply the same standardization
-                    features_scaled = scaler_model.transform(feature_data)
-                    
-                    # Apply the same PCA transformation
-                    pca_components = pca_model.transform(features_scaled)
-                    
-                    # Create component dataframe
-                    component_df = pd.DataFrame(
-                        pca_components,
-                        columns=[f'pc_{i+1}' for i in range(pca_components.shape[1])],
-                        index=backtest_data.index
-                    )
-                    
-                    # Combine with OHLCV to create final backtest data
-                    backtest_data = pd.concat([ohlcv_data, component_df], axis=1)
-                    
-                    logger.info(f"Successfully prepared backtest data with {pca_components.shape[1]} PCA components")
-                    
-                    # Set strategy data with PCA models
-                    strategy.set_data(backtest_data, pca_model=pca_model, scaler_model=scaler_model)
-                    
-                    # Run backtest
-                    if args.detailed_backtest:
-                        backtest_results = run_detailed_backtest(strategy=strategy, data=backtest_data, args=args)
-                    else:
-                        backtest_results = strategy.backtest(backtest_data)
-                        
-                except Exception as e:
-                    logger.error(f"Error during PCA transformation: {e}")
-                    raise
             else:
                 logger.warning("No PCA model available from training, using original data for backtest")
                 raise ValueError("Missing PCA or scaler model")
-                
+                    
         except Exception as e:
             logger.error(f"PCA-based backtest failed: {e}")
             logger.info("Falling back to standard backtest without PCA")
@@ -991,7 +969,7 @@ def main():
                     backtest_results = run_detailed_backtest(strategy=strategy, data=backtest_data, args=args)
                 else:
                     backtest_results = strategy.backtest(backtest_data)
-                    
+                        
             except Exception as e:
                 logger.error(f"Error during standard backtest: {e}")
                 # Create minimal results to avoid downstream errors

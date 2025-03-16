@@ -688,6 +688,76 @@ def generate_features(df: pd.DataFrame, feature_sets: Dict[str, List[str]] = Non
     
     return processed_df
 
+def prepare_data_for_pca_consistency(data, scaler_model, pca_model, original_features=None):
+    """
+    Ensure data has the correct features for PCA transformation, matching what was used during training.
+    
+    Args:
+        data: DataFrame with features to transform
+        scaler_model: Trained StandardScaler model
+        pca_model: Trained PCA model
+        original_features: List of original feature names used during PCA fitting
+        
+    Returns:
+        DataFrame with consistent PCA components
+    """
+    # Extract OHLCV columns which we'll keep unchanged
+    ohlcv_columns = ['open', 'high', 'low', 'close', 'volume']
+    ohlcv_data = data[ohlcv_columns].copy()
+    
+    # Get the features the PCA model was fitted on
+    if original_features is None:
+        # If not explicitly provided, try to extract from the PCA model
+        if hasattr(pca_model, 'feature_names_in_'):
+            original_features = list(pca_model.feature_names_in_)
+            logger.info(f"Using {len(original_features)} features from PCA model's feature_names_in_")
+        else:
+            # If we don't have the feature names, we have to make an educated guess
+            # This is a fallback option and might not be accurate
+            original_features = [col for col in data.columns if col not in ohlcv_columns]
+            logger.warning(f"No feature list available, guessing {len(original_features)} features from current data")
+    
+    # Create a DataFrame with all required features, filling missing ones with zeros
+    feature_data = pd.DataFrame(index=data.index)
+    
+    for feature in original_features:
+        if feature in data.columns:
+            feature_data[feature] = data[feature]
+        else:
+            # Feature is missing, fill with zeros and log warning
+            logger.warning(f"Feature '{feature}' missing in backtest data, filling with zeros")
+            feature_data[feature] = 0.0
+    
+    # Handle any NaN values in feature data
+    feature_data = feature_data.replace([np.inf, -np.inf], np.nan)
+    feature_data = feature_data.fillna(method='ffill').fillna(method='bfill').fillna(0)
+    
+    try:
+        # Apply the same standardization
+        features_scaled = scaler_model.transform(feature_data)
+        
+        # Apply the same PCA transformation
+        pca_components = pca_model.transform(features_scaled)
+        
+        # Create component dataframe
+        component_df = pd.DataFrame(
+            pca_components,
+            columns=[f'pc_{i+1}' for i in range(pca_components.shape[1])],
+            index=data.index
+        )
+        
+        # Combine with OHLCV to create final data
+        result_data = pd.concat([ohlcv_data, component_df], axis=1)
+        
+        logger.info(f"Successfully prepared data with {pca_components.shape[1]} PCA components")
+        return result_data
+        
+    except Exception as e:
+        logger.error(f"Error during PCA transformation: {e}")
+        # Return original data if transformation fails
+        return data
+
+
 if __name__ == "__main__":
     # Test the feature generation process
     import data_processor
