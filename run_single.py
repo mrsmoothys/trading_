@@ -621,6 +621,10 @@ def main():
         variance_threshold = 0.95  # Use 95% explained variance threshold
         data, pca_model, scaler_model = generate_features(data, apply_pca=True, n_components=n_components)
 
+        # Store the original feature columns before PCA transformation
+        original_feature_columns = [col for col in data.columns if col not in ['open', 'high', 'low', 'close', 'volume']]
+        logger.info(f"Stored {len(original_feature_columns)} original feature columns for consistent use in backtest")
+
         # Get PCA components as feature columns
         feature_columns = [col for col in data.columns if col.startswith('pc_')]
        
@@ -825,6 +829,18 @@ def main():
                 
                 logger.info(f"PCA model saved to {pca_path}")
                 logger.info(f"Scaler model saved to {scaler_path}")
+
+                # Also save the feature column names for consistency
+                feature_mapping = {
+                    'original_columns': original_feature_columns,
+                    'pca_columns': feature_columns
+                }
+                
+                feature_mapping_path = os.path.join(model_dir, f"feature_mapping_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json")
+                with open(feature_mapping_path, 'w') as f:
+                    json.dump(feature_mapping, f)
+                
+                logger.info(f"Feature mapping saved to {feature_mapping_path}")
         
         # Step 6: Analyze feature importance if requested
         if args.feature_importance:
@@ -893,17 +909,31 @@ def main():
         # Step 9: Run backtest
         logger.info("Running backtest")
 
-        # Use the models created during training for the backtest
+        # Make a clean copy of the data for backtesting
+        backtest_data = data.copy()
+
         try:
             # Check if we have valid PCA and scaler models from training
             if 'pca_model' in locals() and 'scaler_model' in locals() and pca_model is not None and scaler_model is not None:
                 logger.info(f"Using existing PCA model from training for backtest")
                 
                 # Extract OHLCV data
-                ohlcv_data = data[['open', 'high', 'low', 'close', 'volume']]
+                ohlcv_data = backtest_data[['open', 'high', 'low', 'close', 'volume']]
                 
-                # Extract feature data (excluding OHLCV)
-                feature_data = data[[col for col in data.columns if col not in ['open', 'high', 'low', 'close', 'volume']]]
+                # Get feature data - IMPORTANT: Use the same original features from before PCA
+                if 'original_feature_columns' in locals() and len(original_feature_columns) > 0:
+                    # Filter to only include columns that actually exist in the data
+                    available_columns = [col for col in original_feature_columns if col in backtest_data.columns]
+                    if len(available_columns) < len(original_feature_columns):
+                        logger.warning(f"Only {len(available_columns)} of {len(original_feature_columns)} original features available in backtest data")
+                    
+                    feature_data = backtest_data[available_columns]
+                    logger.info(f"Using {len(available_columns)} original features for PCA transformation")
+                else:
+                    # Fall back to using all non-OHLCV columns
+                    feature_data = backtest_data[[col for col in backtest_data.columns 
+                                                if col not in ['open', 'high', 'low', 'close', 'volume']]]
+                    logger.info(f"No stored original features, using {len(feature_data.columns)} columns from data")
                 
                 try:
                     # Handle missing or non-numeric values in feature data
@@ -920,15 +950,15 @@ def main():
                     component_df = pd.DataFrame(
                         pca_components,
                         columns=[f'pc_{i+1}' for i in range(pca_components.shape[1])],
-                        index=data.index
+                        index=backtest_data.index
                     )
                     
-                    # Combine with OHLCV to create backtest data
+                    # Combine with OHLCV to create final backtest data
                     backtest_data = pd.concat([ohlcv_data, component_df], axis=1)
                     
                     logger.info(f"Successfully prepared backtest data with {pca_components.shape[1]} PCA components")
                     
-                    # Set data for strategy
+                    # Set strategy data with PCA models
                     strategy.set_data(backtest_data, pca_model=pca_model, scaler_model=scaler_model)
                     
                     # Run backtest
@@ -939,7 +969,6 @@ def main():
                         
                 except Exception as e:
                     logger.error(f"Error during PCA transformation: {e}")
-                    # Fall back to no transformation
                     raise
             else:
                 logger.warning("No PCA model available from training, using original data for backtest")
@@ -949,14 +978,36 @@ def main():
             logger.error(f"PCA-based backtest failed: {e}")
             logger.info("Falling back to standard backtest without PCA")
             
-            # Set data without PCA
-            strategy.set_data(data)
-            
-            # Run backtest on original data
-            if args.detailed_backtest:
-                backtest_results = run_detailed_backtest(strategy=strategy, data=data, args=args)
-            else:
-                backtest_results = strategy.backtest(data)
+            # Fall back to standard backtest
+            try:
+                # Reset to original data
+                backtest_data = data.copy()
+                
+                # Just set the data without PCA transformation
+                strategy.set_data(backtest_data)
+                
+                # Run standard backtest
+                if args.detailed_backtest:
+                    backtest_results = run_detailed_backtest(strategy=strategy, data=backtest_data, args=args)
+                else:
+                    backtest_results = strategy.backtest(backtest_data)
+                    
+            except Exception as e:
+                logger.error(f"Error during standard backtest: {e}")
+                # Create minimal results to avoid downstream errors
+                backtest_results = {
+                    'performance': {
+                        'total_return': 0.0,
+                        'num_trades': 0,
+                        'win_rate': 0.0,
+                        'profit_factor': 0.0,
+                        'max_drawdown': 0.0,
+                        'sharpe_ratio': 0.0
+                    },
+                    'trades': [],
+                    'equity_curve': [args.initial_capital],
+                    'signals': data.copy()  # Empty signals DataFrame with same structure
+                }
                 
         # Step 10: Save results
         results_path = os.path.join(args.results_dir, f"results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json")
@@ -1030,6 +1081,17 @@ def main():
         # Final memory cleanup
         check_memory_usage(threshold_gb=0.8, clear_if_high=True)
 
+        # Debug any tuple index issues
+        try:
+            if 'backtest_results' in locals() and backtest_results:
+                logger.info(f"Backtest results structure: {list(backtest_results.keys())}")
+                for k, v in backtest_results.items():
+                    if isinstance(v, (list, dict)):
+                        logger.info(f"  {k}: {type(v)} with {len(v)} items")
+                    else:
+                        logger.info(f"  {k}: {type(v)}")
+        except Exception as debug_e:
+            logger.error(f"Debug error: {debug_e}")
 
         logger.info("Single run completed successfully")
         

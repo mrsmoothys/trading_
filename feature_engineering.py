@@ -3,7 +3,7 @@ Feature engineering module for the AI trading bot.
 Generates technical indicators and advanced features.
 """
 import logging
-from typing import Dict, List, Optional, Tuple, Union, Callable
+from typing import Dict, List, Optional, Tuple, Union, Callable, Any
 
 import numpy as np
 import pandas as pd
@@ -633,7 +633,7 @@ def apply_pca_reduction(data, n_components=30, variance_threshold=0.95):
     return reduced_data, pca, scaler
 
 
-def generate_features(df: pd.DataFrame, feature_sets: Dict[str, List[str]] = None, apply_pca: bool = False, n_components: int = 30) -> pd.DataFrame:
+def generate_features(df: pd.DataFrame, feature_sets: Dict[str, List[str]] = None, apply_pca: bool = False, n_components: int = 30) -> Union[pd.DataFrame, Tuple[pd.DataFrame, Any, Any]]:
     """
     Generate features for the given DataFrame.
     
@@ -644,7 +644,8 @@ def generate_features(df: pd.DataFrame, feature_sets: Dict[str, List[str]] = Non
         n_components: Number of PCA components
         
     Returns:
-        DataFrame with generated features
+        If apply_pca=False: DataFrame with generated features
+        If apply_pca=True: Tuple of (DataFrame, pca_model, scaler_model)
     """
     if feature_sets is None:
         feature_sets = FEATURE_SETS
@@ -679,7 +680,7 @@ def generate_features(df: pd.DataFrame, feature_sets: Dict[str, List[str]] = Non
         logger.info(f"Applying PCA to reduce features to {n_components} components")
         processed_df, pca_model, scaler_model = apply_pca_reduction(processed_df, n_components)
         
-        # Store PCA and scaler models for later use
+        # Return DataFrame with PCA components and models
         return processed_df, pca_model, scaler_model
     
     # Replace deprecated method with newer methods

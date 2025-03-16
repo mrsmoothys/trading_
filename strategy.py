@@ -277,53 +277,49 @@ class TradingStrategy:
         self.current_timestamp = None
         self.current_price = None
     
-    def set_data(self, data: pd.DataFrame, **kwargs) -> None:
+    def save_model(self, path: str, feature_columns: List[str] = None) -> None:
         """
-        Set the market data for the strategy.
+        Save the model to disk.
         
         Args:
-            data: Market data as pandas DataFrame
-            **kwargs: Additional keyword arguments (for extensibility)
+            path: Path to save the model
+            feature_columns: Optional list of feature column names
         """
-        self.data = data.copy()
+        if self.model is None:
+            raise ValueError("Model not initialized. Call build_model() first.")
         
-        # Reset position and performance tracking
-        self.position = Position.FLAT
-        self.current_order = None
-        self.orders = []
-        self.trades = []
-        self.equity_curve = [self.initial_capital]
-        self.drawdowns = [0.0]
-        self.returns = [0.0]
+        # Create directory if it doesn't exist
+        os.makedirs(os.path.dirname(path), exist_ok=True)
         
-        # Set initial market state
-        self.current_index = 0
-        self.current_timestamp = self.data.index[0]
-        self.current_price = self.data['close'].iloc[0]
-    
-    def update_state(self, index: int) -> None:
-        """
-        Update the current market state.
         
-        Args:
-            index: Current data index
-        """
-        if index >= len(self.data):
-            raise IndexError(f"Index {index} out of bounds for data of length {len(self.data)}")
+        # Change file extension from .h5 to .keras if needed
+        if path.endswith('.h5'):
+            keras_path = path.replace('.h5', '.keras')
+        else:
+            keras_path = path
         
-        self.current_index = index
-        self.current_timestamp = self.data.index[index]
-        self.current_price = self.data['close'].iloc[index]
+        # Save model in new format
+        self.model.save(keras_path)
+
+        # Save metadata
+        metadata = {
+            'input_shape': self.input_shape,
+            'output_dim': self.output_dim,
+            'model_type': self.model_type,
+            'datetime_saved': pd.Timestamp.now().isoformat()
+        }
         
-        # Update trailing stop if active
-        if self.current_order and self.current_order.status == "FILLED" and self.current_order.trailing_stop:
-            self.current_order.update_trailing_stop(self.current_price)
+        # Add feature columns if provided
+        if feature_columns is not None:  # Fixed: proper None check
+            metadata['feature_count'] = len(feature_columns)
+            metadata['feature_names'] = feature_columns
         
-        # Check for SL/TP hits
-        self._check_exit_conditions()
+        # Save metadata
+        metadata_path = f"{path}_metadata.json"
+        with open(metadata_path, 'w') as f:
+            json.dump(metadata, f)
         
-        # Update equity curve
-        self._update_equity()
+        logger.info(f"Model saved to {path} with metadata at {metadata_path}")
     
     def _update_equity(self) -> None:
         """Update equity curve, drawdowns, and returns."""
@@ -846,6 +842,7 @@ class MLTradingStrategy(TradingStrategy):
         self.current_index = 0
         self.current_timestamp = self.data.index[0]
         self.current_price = self.data['close'].iloc[0]
+
 
     def _transform_features_with_pca(self, pca_model, scaler_model):
         """

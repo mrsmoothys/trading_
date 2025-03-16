@@ -8,6 +8,7 @@ import time
 import json
 import logging
 import hmac
+import re
 import hashlib
 import requests
 import websocket
@@ -251,8 +252,8 @@ class BinanceConnection(ExchangeConnection):
         
         # Set API base URL
         if testnet:
-            self.base_url = "https://testnet.binance.vision"
-            self.wss_url = "wss://testnet.binance.vision/ws"
+            self.base_url = "https://testnet.binancefuture.com"
+            self.wss_url = "wss://stream.binancefuture.com"
         else:
             self.base_url = "https://api.binance.com"
             self.wss_url = "wss://stream.binance.com:9443/ws"
@@ -272,7 +273,7 @@ class BinanceConnection(ExchangeConnection):
             True if connection is successful, False otherwise
         """
         try:
-            url = f"{self.base_url}/api/v3/ping"
+            url = f"{self.base_url}/fapi/v1/klinesping"
             response = requests.get(url)
             response.raise_for_status()
             
@@ -384,7 +385,7 @@ class BinanceConnection(ExchangeConnection):
         Returns:
             Dictionary with account information
         """
-        return self._make_request('GET', '/api/v3/account', signed=True)
+        return self._make_request('GET', '/fapi/v1/klinesaccount', signed=True)
     
     def get_exchange_info(self, symbol: Optional[str] = None) -> Dict[str, Any]:
         """
@@ -400,7 +401,7 @@ class BinanceConnection(ExchangeConnection):
         if symbol:
             params['symbol'] = symbol
         
-        return self._make_request('GET', '/api/v3/exchangeInfo', params=params)
+        return self._make_request('GET', '/fapi/v1/klinesexchangeInfo', params=params)
     
     def get_market_data(self, symbol: str, timeframe: str, limit: int = 100) -> pd.DataFrame:
         """
@@ -445,7 +446,8 @@ class BinanceConnection(ExchangeConnection):
         }
         
         # Make request
-        response = self._make_request('GET', '/api/v3/klines', params=params)
+        response = self._make_request("/fapi/v1/klines", params=params)
+
         
         # Convert to DataFrame
         columns = [
@@ -508,7 +510,7 @@ class BinanceConnection(ExchangeConnection):
             pass
         
         # Place order
-        response = self._make_request('POST', '/api/v3/order', params=params, signed=True)
+        response = self._make_request('POST', '/fapi/v1/klinesorder', params=params, signed=True)
         
         return response
     
@@ -528,7 +530,7 @@ class BinanceConnection(ExchangeConnection):
             'orderId': order_id
         }
         
-        return self._make_request('DELETE', '/api/v3/order', params=params, signed=True)
+        return self._make_request('DELETE', '/fapi/v1/klinesorder', params=params, signed=True)
     
     def get_order_status(self, order_id: str, symbol: str) -> Dict[str, Any]:
         """
@@ -546,7 +548,7 @@ class BinanceConnection(ExchangeConnection):
             'orderId': order_id
         }
         
-        return self._make_request('GET', '/api/v3/order', params=params, signed=True)
+        return self._make_request('GET', '/fapi/v1/klinesorder', params=params, signed=True)
     
     def get_open_orders(self, symbol: Optional[str] = None) -> List[Dict[str, Any]]:
         """
@@ -562,7 +564,7 @@ class BinanceConnection(ExchangeConnection):
         if symbol:
             params['symbol'] = symbol
         
-        return self._make_request('GET', '/api/v3/openOrders', params=params, signed=True)
+        return self._make_request('GET', '/fapi/v1/klinesopenOrders', params=params, signed=True)
     
     def get_position(self, symbol: str) -> Dict[str, Any]:
         """
@@ -624,7 +626,7 @@ class BinanceConnection(ExchangeConnection):
             'symbol': symbol
         }
         
-        return self._make_request('GET', '/api/v3/ticker/price', params=params)
+        return self._make_request('GET', '/fapi/v1/klinesticker/price', params=params)
     
     def subscribe_to_klines(self, symbol: str, interval: str, callback: Callable) -> None:
         """

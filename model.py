@@ -500,7 +500,6 @@ class DeepLearningModel:
         # Create directory if it doesn't exist
         os.makedirs(os.path.dirname(path), exist_ok=True)
         
-        
         # Change file extension from .h5 to .keras if needed
         if path.endswith('.h5'):
             keras_path = path.replace('.h5', '.keras')
