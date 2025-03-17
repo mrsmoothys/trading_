@@ -565,12 +565,7 @@ def main():
     setup_logging(log_level=args.log_level)
     
     logger = logging.getLogger(__name__)
-    logger.info("Starting AI Trading Bot Single Run with performance optimizations")
-
-    # Configure memory and GPU limits
-    from utils import check_memory_usage, limit_gpu_memory
-    limit_gpu_memory(allow_growth=True)
-    check_memory_usage(threshold_gb=0.8, clear_if_high=True)
+    logger.info("Starting AI Trading Bot Single Run")
     
     # Print system information
     print_system_info()
@@ -606,25 +601,11 @@ def main():
             data = data[data.index >= args.start_date]
         if args.end_date:
             data = data[data.index <= args.end_date]
-
-
-        # For faster optimization, optionally use a smaller subset of data
-        if args.optimize_model and len(data) > 5000:
-            # If optimizing, consider using less data for faster iterations
-            logger.info(f"Using recent data subset for optimization (original size: {len(data)})")
-            data = data.iloc[-5000:]  # Use last 5000 rows for faster optimization
-            logger.info(f"Reduced data size to {len(data)} rows")
         
-        # Generate features with optimized PCA
-        logger.info("Generating features with optimized PCA")
-        n_components = 30  # Default, will be optimized based on explained variance
-        variance_threshold = 0.95  # Use 95% explained variance threshold
-        data, pca_model, scaler_model = generate_features(data, apply_pca=True, n_components=n_components)
-
-        # Store the original feature columns before PCA transformation
-        original_feature_columns = [col for col in data.columns if col not in ['open', 'high', 'low', 'close', 'volume']]
-        logger.info(f"Storing {len(original_feature_columns)} original feature columns for consistent use in backtest")
-            
+       # Generate features with PCA reduction
+        logger.info("Generating features with PCA dimensionality reduction")
+        n_components = 30  # Set the number of components to match model expectations
+       
         # Pre-process all columns to ensure numeric types before PCA
         for col in data.columns:
             if col not in ['open', 'high', 'low', 'close', 'volume']:
@@ -638,30 +619,16 @@ def main():
                     # Remove problematic column as last resort
                     data = data.drop(col, axis=1)
 
-            # Now apply PCA with clean data
+        # Now apply PCA with clean data
         try:
-            # Store a clean copy of the data with all features for later use
-            pre_pca_data = data.copy()
-            
-            # Apply PCA to reduce dimensionality
             data, pca_model, scaler_model = generate_features(data, apply_pca=True, n_components=n_components)
-            
-            # Now feature columns are simply the PCA components
+            # Now feature columns are simply the PCA components plus OHLCV
             feature_columns = [col for col in data.columns if col.startswith('pc_')]
-            logger.info(f"Successfully reduced features to {len(feature_columns)} PCA components")
-            
-            # Store feature mapping for backtest consistency
-            feature_mapping = {
-                'original_columns': original_feature_columns,
-                'pca_columns': feature_columns
-            }
         except Exception as e:
             logger.error(f"Error in PCA reduction: {e}")
             logger.info("Falling back to regular feature processing without PCA")
             data = generate_features(data, apply_pca=False)
             feature_columns = [col for col in data.columns if col not in ['open', 'high', 'low', 'close', 'volume']]
-            pca_model = None
-            scaler_model = None
 
 
         # Now feature columns are simply the PCA components plus OHLCV
@@ -700,10 +667,6 @@ def main():
         X_train, X_val, X_test, y_train, y_val, y_test = train_val_test_split(
             X, y, train_size=args.train_size, val_size=args.val_size
         )
-
-        # Check memory usage after data preparation
-        check_memory_usage(threshold_gb=0.8, clear_if_high=True)
-        
         
         # Step 3: Cross-validation if requested
         if args.cross_validation:
@@ -787,7 +750,7 @@ def main():
                 lookback_window=args.lookback,
                 prediction_horizon=args.horizon,
                 feature_columns=feature_columns,
-                target_column='close_return',  # Changed from 'close' to 'close_return'
+                target_column='close', 
                 normalize=True,
             )
             # Derive actual feature count from training data (ensuring consistency)
@@ -825,38 +788,21 @@ def main():
             )
 
             if model_path:
-                 # Save model with feature metadata
-                model.save_model(model_path, feature_columns=feature_columns)
                 logger.info(f"Model saved to {model_path}")
                 
                 # Save PCA and scaler models
-                if pca_model is not None and scaler_model is not None:
-                    import pickle
-                    model_dir = os.path.dirname(model_path)
-                    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-                    pca_path = os.path.join(model_dir, f"pca_{timestamp}.pkl")
-                    scaler_path = os.path.join(model_dir, f"scaler_{timestamp}.pkl")
-                    
-                    with open(pca_path, 'wb') as f:
-                        pickle.dump(pca_model, f)
-                    
-                    with open(scaler_path, 'wb') as f:
-                        pickle.dump(scaler_model, f)
-                    
-                    logger.info(f"PCA model saved to {pca_path}")
-                    logger.info(f"Scaler model saved to {scaler_path}")
-                # Also save the feature column names for consistency
-                    feature_mapping = {
-                        'original_columns': original_feature_columns,
-                        'pca_columns': feature_columns,
-                        'timestamp': timestamp  # Add timestamp for matching files
-                    }
-                    
-                    feature_mapping_path = os.path.join(model_dir, f"feature_mapping_{timestamp}.json")
-                    with open(feature_mapping_path, 'w') as f:
-                        json.dump(feature_mapping, f)
-                    
-                    logger.info(f"Feature mapping saved to {feature_mapping_path}")
+                import pickle
+                pca_path = os.path.join(model_dir, f"pca_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pkl")
+                scaler_path = os.path.join(model_dir, f"scaler_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pkl")
+                
+                with open(pca_path, 'wb') as f:
+                    pickle.dump(pca_model, f)
+                
+                with open(scaler_path, 'wb') as f:
+                    pickle.dump(scaler_model, f)
+                
+                logger.info(f"PCA model saved to {pca_path}")
+                logger.info(f"Scaler model saved to {scaler_path}")
         
         # Step 6: Analyze feature importance if requested
         if args.feature_importance:
@@ -922,112 +868,33 @@ def main():
         )
         
         
-        # In run_single.py, update the backtest section:
-
         # Step 9: Run backtest
         logger.info("Running backtest")
 
-        # Make a clean copy of the data for backtesting
-        if 'pre_pca_data' in locals() and pre_pca_data is not None:
-            # If we stored the pre-PCA data, use that for consistency
-            backtest_data = pre_pca_data.copy()
-            logger.info("Using stored pre-PCA data for backtest consistency")
-        else:
-            # Otherwise use the current data
-            backtest_data = data.copy()
+        # Prepare data with consistent features for backtest
+        n_components = 30
+        logger.info(f"Preparing data for backtest with {n_components} PCA components")
 
         try:
-            # Check if we have valid PCA and scaler models from training
-            if 'pca_model' in locals() and 'scaler_model' in locals() and pca_model is not None and scaler_model is not None:
-                logger.info(f"Using PCA model from training for backtest")
-                
-                # Use the original feature columns from before PCA for consistency
-                if 'original_feature_columns' in locals() and len(original_feature_columns) > 0:
-                    pca_original_features = original_feature_columns
-                    logger.info(f"Using {len(pca_original_features)} stored original features")
-                elif hasattr(pca_model, 'feature_names_in_'):
-                    pca_original_features = list(pca_model.feature_names_in_)
-                    logger.info(f"Found {len(pca_original_features)} original features from PCA model")
-                else:
-                    # Fallback to using all non-OHLCV columns from the original data
-                    pca_original_features = [col for col in backtest_data.columns 
-                                            if col not in ['open', 'high', 'low', 'close', 'volume']]
-                    logger.info(f"Using {len(pca_original_features)} features from original data")
-                
-                # Prepare consistent data for PCA transformation
-                from feature_engineering import prepare_data_for_pca_consistency
-                backtest_data_pca = prepare_data_for_pca_consistency(
-                    data=backtest_data,
-                    scaler_model=scaler_model,
-                    pca_model=pca_model,
-                    original_features=pca_original_features
-                )
-                
-                # Check if PCA transformation succeeded
-                if any(col.startswith('pc_') for col in backtest_data_pca.columns):
-                    logger.info(f"Successfully applied PCA transformation for backtest with {sum(1 for col in backtest_data_pca.columns if col.startswith('pc_'))} components")
-                    
-                    # Set strategy data with PCA models
-                    strategy.set_data(backtest_data_pca, pca_model=pca_model, scaler_model=scaler_model)
-                    
-                    # Run backtest
-                    if args.detailed_backtest:
-                        backtest_results = run_detailed_backtest(strategy=strategy, data=backtest_data_pca, args=args)
-                    else:
-                        backtest_results = strategy.backtest(backtest_data_pca)
-                else:
-                    # PCA transformation failed to create expected columns
-                    raise ValueError("PCA transformation did not produce expected components")
-            else:
-                raise ValueError("No PCA or scaler model available")
-                        
-        except Exception as e:
-            logger.error(f"PCA-based backtest failed: {e}")
-            logger.info("Falling back to standard backtest without PCA")
+            # Apply PCA transformation before backtest
+            backtest_data, pca_model, scaler_model = apply_pca_reduction(data, n_components=n_components)
             
-            # Fall back to standard backtest
-            try:
-                # Generate features on original data without PCA
-                backtest_data = generate_features(backtest_data, apply_pca=False)
-                
-                # Limit features to match model input if needed
-                feature_cols = [col for col in backtest_data.columns 
-                            if col not in ['open', 'high', 'low', 'close', 'volume']]
-                
-                max_features = 36  # Maximum model input features
-                if len(feature_cols) > max_features:
-                    logger.warning(f"Limiting feature count from {len(feature_cols)} to {max_features}")
-                    # Only keep the first max_features features
-                    extra_cols = feature_cols[max_features:]
-                    backtest_data = backtest_data.drop(columns=extra_cols)
-                
-                # Just set the data without PCA transformation
-                strategy.set_data(backtest_data)
-                
-                # Run standard backtest
-                if args.detailed_backtest:
-                    backtest_results = run_detailed_backtest(strategy=strategy, data=backtest_data, args=args)
-                else:
-                    backtest_results = strategy.backtest(backtest_data)
-                            
-            except Exception as e:
-                logger.error(f"Error during standard backtest: {e}")
-                # Create minimal results to avoid downstream errors
-                backtest_results = {
-                    'performance': {
-                        'total_return': 0.0,
-                        'num_trades': 0,
-                        'win_rate': 0.0,
-                        'profit_factor': 0.0,
-                        'max_drawdown': 0.0,
-                        'sharpe_ratio': 0.0
-                    },
-                    'trades': [],
-                    'equity_curve': [args.initial_capital],
-                    'signals': backtest_data[['open', 'high', 'low', 'close', 'volume']].copy()  # Create valid signals DataFrame
-                }
-                # Add signal column to prevent errors
-                backtest_results['signals']['signal'] = 0
+            # Set data for strategy with PCA transformation
+            strategy.set_data(backtest_data, pca_model=pca_model, scaler_model=scaler_model)
+            
+            # Run backtest
+            if args.detailed_backtest:
+                backtest_results = run_detailed_backtest(strategy=strategy, data=backtest_data, args=args)
+            else:
+                backtest_results = strategy.backtest(backtest_data)
+        except Exception as e:
+            logger.error(f"Error during PCA processing: {e}")
+            # Fallback to original approach without PCA
+            logger.info("Falling back to standard backtest without PCA")
+            if args.detailed_backtest:
+                backtest_results = run_detailed_backtest(strategy=strategy, data=data, args=args)
+            else:
+                backtest_results = strategy.backtest(data)
                 
         # Step 10: Save results
         results_path = os.path.join(args.results_dir, f"results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json")
@@ -1098,21 +965,6 @@ def main():
         logger.info(f"Sharpe Ratio: {backtest_results['performance']['sharpe_ratio']:.2f}")
         logger.info(f"Max Drawdown: {backtest_results['performance']['max_drawdown']:.2f}%")
         
-        # Final memory cleanup
-        check_memory_usage(threshold_gb=0.8, clear_if_high=True)
-
-        # Debug any tuple index issues
-        try:
-            if 'backtest_results' in locals() and backtest_results:
-                logger.info(f"Backtest results structure: {list(backtest_results.keys())}")
-                for k, v in backtest_results.items():
-                    if isinstance(v, (list, dict)):
-                        logger.info(f"  {k}: {type(v)} with {len(v)} items")
-                    else:
-                        logger.info(f"  {k}: {type(v)}")
-        except Exception as debug_e:
-            logger.error(f"Debug error: {debug_e}")
-
         logger.info("Single run completed successfully")
         
         return 0

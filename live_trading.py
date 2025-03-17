@@ -8,7 +8,6 @@ import time
 import json
 import logging
 import hmac
-import re
 import hashlib
 import requests
 import websocket
@@ -252,8 +251,8 @@ class BinanceConnection(ExchangeConnection):
         
         # Set API base URL
         if testnet:
-            self.base_url = "https://testnet.binancefuture.com"
-            self.wss_url = "wss://stream.binancefuture.com"
+            self.base_url = "https://testnet.binance.vision"
+            self.wss_url = "wss://testnet.binance.vision/ws"
         else:
             self.base_url = "https://api.binance.com"
             self.wss_url = "wss://stream.binance.com:9443/ws"
@@ -273,7 +272,7 @@ class BinanceConnection(ExchangeConnection):
             True if connection is successful, False otherwise
         """
         try:
-            url = f"{self.base_url}/fapi/v1/klinesping"
+            url = f"{self.base_url}/api/v3/ping"
             response = requests.get(url)
             response.raise_for_status()
             
@@ -385,7 +384,7 @@ class BinanceConnection(ExchangeConnection):
         Returns:
             Dictionary with account information
         """
-        return self._make_request('GET', '/fapi/v1/klinesaccount', signed=True)
+        return self._make_request('GET', '/api/v3/account', signed=True)
     
     def get_exchange_info(self, symbol: Optional[str] = None) -> Dict[str, Any]:
         """
@@ -401,7 +400,7 @@ class BinanceConnection(ExchangeConnection):
         if symbol:
             params['symbol'] = symbol
         
-        return self._make_request('GET', '/fapi/v1/klinesexchangeInfo', params=params)
+        return self._make_request('GET', '/api/v3/exchangeInfo', params=params)
     
     def get_market_data(self, symbol: str, timeframe: str, limit: int = 100) -> pd.DataFrame:
         """
@@ -446,8 +445,7 @@ class BinanceConnection(ExchangeConnection):
         }
         
         # Make request
-        response = self._make_request("/fapi/v1/klines", params=params)
-
+        response = self._make_request('GET', '/api/v3/klines', params=params)
         
         # Convert to DataFrame
         columns = [
@@ -510,7 +508,7 @@ class BinanceConnection(ExchangeConnection):
             pass
         
         # Place order
-        response = self._make_request('POST', '/fapi/v1/klinesorder', params=params, signed=True)
+        response = self._make_request('POST', '/api/v3/order', params=params, signed=True)
         
         return response
     
@@ -530,7 +528,7 @@ class BinanceConnection(ExchangeConnection):
             'orderId': order_id
         }
         
-        return self._make_request('DELETE', '/fapi/v1/klinesorder', params=params, signed=True)
+        return self._make_request('DELETE', '/api/v3/order', params=params, signed=True)
     
     def get_order_status(self, order_id: str, symbol: str) -> Dict[str, Any]:
         """
@@ -548,7 +546,7 @@ class BinanceConnection(ExchangeConnection):
             'orderId': order_id
         }
         
-        return self._make_request('GET', '/fapi/v1/klinesorder', params=params, signed=True)
+        return self._make_request('GET', '/api/v3/order', params=params, signed=True)
     
     def get_open_orders(self, symbol: Optional[str] = None) -> List[Dict[str, Any]]:
         """
@@ -564,7 +562,7 @@ class BinanceConnection(ExchangeConnection):
         if symbol:
             params['symbol'] = symbol
         
-        return self._make_request('GET', '/fapi/v1/klinesopenOrders', params=params, signed=True)
+        return self._make_request('GET', '/api/v3/openOrders', params=params, signed=True)
     
     def get_position(self, symbol: str) -> Dict[str, Any]:
         """
@@ -626,7 +624,7 @@ class BinanceConnection(ExchangeConnection):
             'symbol': symbol
         }
         
-        return self._make_request('GET', '/fapi/v1/klinesticker/price', params=params)
+        return self._make_request('GET', '/api/v3/ticker/price', params=params)
     
     def subscribe_to_klines(self, symbol: str, interval: str, callback: Callable) -> None:
         """
@@ -681,8 +679,7 @@ class BinanceConnection(ExchangeConnection):
 
 class LiveTrader:
     """
-    Enhanced class for live trading using ML models and strategies.
-    Includes improved model loading and PCA support.
+    Class for live trading using ML models and strategies.
     """
     
     def __init__(
@@ -736,7 +733,6 @@ class LiveTrader:
         self.last_update_time = {}
         self.active_orders = {}
         self.positions = {}
-        self.feature_models = {}  # Store PCA and scaler models
         
         # Control flags
         self.running = False
@@ -753,115 +749,44 @@ class LiveTrader:
         
         self.logger.info("LiveTrader initialized")
     
-    def load_trading_models(self, symbols: List[str], timeframes: List[str]) -> bool:
+    def load_models(self) -> bool:
         """
-        Enhanced model loading function for live trading.
-        Loads ML models and associated PCA/scaler models for all symbols and timeframes.
+        Load ML models for all symbols and timeframes.
         
-        Args:
-            symbols: List of trading symbols
-            timeframes: List of timeframes to trade
-            
         Returns:
-            True if all necessary models were loaded successfully, False otherwise
+            True if all models loaded successfully, False otherwise
         """
-        self.logger.info(f"Loading models for {symbols} on timeframes {timeframes}")
+        self.logger.info("Loading models")
         success = True
-        loaded_models = 0
         
-        # Create models directory if it doesn't exist
-        os.makedirs(MODELS_DIR, exist_ok=True)
-        
-        for symbol in symbols:
-            for timeframe in timeframes:
+        for symbol in self.symbols:
+            for timeframe in self.timeframes:
                 model_id = f"{symbol}_{timeframe}"
-                model_dir = os.path.join(MODELS_DIR, model_id)
-                
-                # Skip if model directory doesn't exist
-                if not os.path.exists(model_dir):
-                    self.logger.warning(f"No model directory found for {model_id}, skipping")
-                    success = False
-                    continue
-                
-                # Find latest model file
-                model_files = [f for f in os.listdir(model_dir) if f.endswith('.h5') or f.endswith('.keras')]
-                if not model_files:
-                    self.logger.warning(f"No model files found for {model_id}, skipping")
-                    success = False
-                    continue
-                
-                # Get latest model file by creation time
-                latest_model = max(model_files, key=lambda f: os.path.getmtime(os.path.join(model_dir, f)))
-                model_path = os.path.join(model_dir, latest_model)
                 
                 try:
-                    # Load model
-                    self.logger.info(f"Loading model from {model_path}")
+                    # Try to load model
+                    model = self.model_manager.load_model(symbol, timeframe)
                     
-                    # Create model with lookback_window and feature count placeholder that will be replaced
-                    model = DeepLearningModel(
-                        input_shape=(LOOKBACK_WINDOW, 36),  # Default to 36 features
-                        output_dim=PREDICTION_HORIZON,
-                        model_path=model_path
-                    )
-                    
-                    # Try to load PCA and scaler models if they exist
-                    pca_model = None
-                    scaler_model = None
-                    
-                    # Find PCA and scaler files with matching timestamp to the model
-                    model_timestamp = re.search(r'(\d{8}_\d{6})', latest_model)
-                    if model_timestamp:
-                        timestamp = model_timestamp.group(1)
-                        pca_files = [f for f in os.listdir(model_dir) if f.startswith('pca_') and timestamp in f]
-                        scaler_files = [f for f in os.listdir(model_dir) if f.startswith('scaler_') and timestamp in f]
-                        
-                        if pca_files and scaler_files:
-                            try:
-                                import pickle
-                                pca_path = os.path.join(model_dir, pca_files[0])
-                                scaler_path = os.path.join(model_dir, scaler_files[0])
-                                
-                                with open(pca_path, 'rb') as f:
-                                    pca_model = pickle.load(f)
-                                
-                                with open(scaler_path, 'rb') as f:
-                                    scaler_model = pickle.load(f)
-                                
-                                self.logger.info(f"Loaded PCA and scaler models for {model_id}")
-                            except Exception as e:
-                                self.logger.warning(f"Error loading PCA/scaler models for {model_id}: {e}")
-                    
-                    # Store in model manager and strategy params
-                    self.model_manager.models[model_id] = model
-                    
-                    # Store PCA and scaler models for this symbol/timeframe
-                    if pca_model is not None and scaler_model is not None:
-                        if not hasattr(self, 'feature_models'):
-                            self.feature_models = {}
-                        self.feature_models[model_id] = {
-                            'pca': pca_model,
-                            'scaler': scaler_model
-                        }
-                    
-                    loaded_models += 1
-                    self.logger.info(f"Model loaded successfully for {model_id}")
+                    if model is None:
+                        self.logger.warning(f"Model not found for {model_id}, skipping")
+                        success = False
+                    else:
+                        self.logger.info(f"Model loaded for {model_id}")
                 
                 except Exception as e:
                     self.logger.error(f"Error loading model for {model_id}: {e}")
                     success = False
         
-        self.logger.info(f"Loaded {loaded_models} models out of {len(symbols) * len(timeframes)} required")
-        return success and loaded_models == len(symbols) * len(timeframes)
+        return success
     
     def initialize_strategies(self) -> bool:
         """
-        Initialize trading strategies for all symbols and timeframes with PCA support.
+        Initialize trading strategies for all symbols and timeframes.
         
         Returns:
             True if all strategies initialized successfully, False otherwise
         """
-        self.logger.info("Initializing strategies with PCA support")
+        self.logger.info("Initializing strategies")
         success = True
         
         for symbol in self.symbols:
@@ -909,12 +834,12 @@ class LiveTrader:
                 except Exception as e:
                     self.logger.error(f"Error initializing strategy for {model_id}: {e}")
                     success = False
-            
+        
         return success
     
     def _update_data(self, symbol: str, timeframe: str, force: bool = False) -> pd.DataFrame:
         """
-        Update market data for a symbol and timeframe with PCA transformation support.
+        Update market data for a symbol and timeframe.
         
         Args:
             symbol: Trading symbol
@@ -922,7 +847,7 @@ class LiveTrader:
             force: Force update even if recently updated
             
         Returns:
-            Updated DataFrame with market data and PCA-transformed features
+            Updated DataFrame with market data
         """
         model_id = f"{symbol}_{timeframe}"
         current_time = time.time()
@@ -951,46 +876,8 @@ class LiveTrader:
             
             data = self.exchange.get_market_data(symbol, timeframe, limit=limit)
             
-            # Generate regular features
-            from feature_engineering import generate_features
+            # Generate features
             data = generate_features(data)
-            
-            # Apply PCA transformation if available
-            if hasattr(self, 'feature_models') and model_id in self.feature_models:
-                try:
-                    # Extract OHLCV
-                    ohlcv = data[['open', 'high', 'low', 'close', 'volume']]
-                    
-                    # Get feature columns (exclude OHLCV)
-                    feature_cols = [col for col in data.columns if col not in ['open', 'high', 'low', 'close', 'volume']]
-                    features = data[feature_cols]
-                    
-                    # Handle extreme values
-                    features.replace([np.inf, -np.inf], np.nan, inplace=True)
-                    features.fillna(features.mean(), inplace=True)
-                    
-                    # Apply scaler
-                    scaler_model = self.feature_models[model_id]['scaler']
-                    features_scaled = scaler_model.transform(features)
-                    
-                    # Apply PCA
-                    pca_model = self.feature_models[model_id]['pca']
-                    components = pca_model.transform(features_scaled)
-                    
-                    # Create component dataframe
-                    component_df = pd.DataFrame(
-                        components,
-                        columns=[f'pc_{i+1}' for i in range(components.shape[1])],
-                        index=data.index
-                    )
-                    
-                    # Combine with OHLCV
-                    data = pd.concat([ohlcv, component_df], axis=1)
-                    self.logger.debug(f"Applied PCA transformation for {model_id}")
-                
-                except Exception as e:
-                    self.logger.error(f"Error applying PCA transformation for {model_id}: {e}")
-                    self.logger.info("Using regular features without PCA")
             
             # Update cache
             self.data_cache[model_id] = data
@@ -1011,7 +898,7 @@ class LiveTrader:
     
     def _get_current_signals(self) -> Dict[str, int]:
         """
-        Get current trading signals for all symbols and timeframes with PCA support.
+        Get current trading signals for all symbols and timeframes.
         
         Returns:
             Dictionary of signals by model_id
@@ -1029,15 +916,8 @@ class LiveTrader:
                     self.logger.warning(f"No data available for {model_id}, skipping signal")
                     continue
                 
-                # Check if we have PCA models for this symbol/timeframe
-                pca_model = None
-                scaler_model = None
-                if hasattr(self, 'feature_models') and model_id in self.feature_models:
-                    pca_model = self.feature_models[model_id]['pca']
-                    scaler_model = self.feature_models[model_id]['scaler']
-                
-                # Generate signals with optional PCA models
-                strategy.set_data(data, pca_model=pca_model, scaler_model=scaler_model)
+                # Generate signals
+                strategy.set_data(data)
                 signal_df = strategy.generate_signals()
                 
                 # Get latest signal
@@ -1046,16 +926,28 @@ class LiveTrader:
                 # Store signal
                 signals[model_id] = latest_signal
                 
-                self.logger.info(f"Signal for {model_id}: {latest_signal}")
+                self.logger.debug(f"Signal for {model_id}: {latest_signal}")
             
             except Exception as e:
                 self.logger.error(f"Error generating signal for {model_id}: {e}")
         
         return signals
     
+    def _update_positions(self) -> None:
+        """Update current positions for all symbols."""
+        for symbol in self.symbols:
+            try:
+                position = self.exchange.get_position(symbol)
+                self.positions[symbol] = position
+                
+                self.logger.debug(f"Position updated for {symbol}: {position['total_base']} {position['base_asset']}")
+            
+            except Exception as e:
+                self.logger.error(f"Error updating position for {symbol}: {e}")
+    
     def _execute_signals(self, signals: Dict[str, int]) -> None:
         """
-        Execute trading signals by placing orders with improved error handling.
+        Execute trading signals by placing orders.
         
         Args:
             signals: Dictionary of signals by model_id
@@ -1095,9 +987,6 @@ class LiveTrader:
                 ticker = self.exchange.get_ticker(symbol)
                 current_price = float(ticker['price'])
                 
-                # Log the decision
-                self.logger.info(f"{symbol} signals: {long_signals} long, {short_signals} short, {neutral_signals} neutral -> Overall: {overall_signal}")
-                
                 # Determine action based on current position and signal
                 if current_position > 0 and overall_signal <= 0:
                     # Close long position
@@ -1119,9 +1008,6 @@ class LiveTrader:
                     # Open position according to signal
                     side = 'buy' if overall_signal > 0 else 'sell'
                     self._open_position(symbol, side, current_price)
-                
-                else:
-                    self.logger.info(f"No action needed for {symbol}: position={current_position}, signal={overall_signal}")
             
             except Exception as e:
                 self.logger.error(f"Error executing signals for {symbol}: {e}")
@@ -1130,60 +1016,285 @@ class LiveTrader:
                 if self.on_error:
                     self.on_error(symbol, str(e))
     
+    def _open_position(self, symbol: str, side: str, price: float) -> None:
+        """
+        Open a new trading position.
+        
+        Args:
+            symbol: Trading symbol
+            side: Order side ('buy' or 'sell')
+            price: Current price
+        """
+        try:
+            # Get account info
+            account_info = self.exchange.get_account_info()
+            
+            # Determine position size based on available balance
+            quote_asset = symbol[-4:]  # Assuming USDT pairs like BTCUSDT
+            balance = next((asset for asset in account_info['balances'] 
+                           if asset['asset'] == quote_asset), {'free': '0'})
+            
+            available_balance = float(balance['free'])
+            
+            # Determine position size
+            strategy_id = f"{symbol}_{self.timeframes[0]}"  # Use first timeframe for simplicity
+            position_size_pct = self.strategies[strategy_id].position_size if strategy_id in self.strategies else POSITION_SIZE
+            
+            # Calculate quantity
+            position_value = available_balance * position_size_pct
+            quantity = position_value / price
+            
+            # Round quantity to appropriate precision
+            exchange_info = self.exchange.get_exchange_info(symbol)
+            symbol_info = next((s for s in exchange_info['symbols'] if s['symbol'] == symbol), None)
+            
+            if symbol_info:
+                lot_size_filter = next((f for f in symbol_info['filters'] if f['filterType'] == 'LOT_SIZE'), None)
+                
+                if lot_size_filter:
+                    min_qty = float(lot_size_filter['minQty'])
+                    step_size = float(lot_size_filter['stepSize'])
+                    
+                    # Round to step size
+                    quantity = int(quantity / step_size) * step_size
+                    
+                    # Ensure minimum quantity
+                    quantity = max(quantity, min_qty)
+            
+            # Create order
+            order = Order(
+                symbol=symbol,
+                order_type='market',
+                side=side,
+                price=price,
+                quantity=quantity,
+                timestamp=pd.Timestamp.now()
+            )
+            
+            # Place order
+            response = self.exchange.place_order(order)
+            
+            # Store active order
+            order_id = response.get('orderId')
+            self.active_orders[order_id] = {
+                'symbol': symbol,
+                'side': side,
+                'quantity': quantity,
+                'price': price,
+                'timestamp': order.timestamp
+            }
+            
+            self.logger.info(f"Opened {side} position for {symbol}: {quantity} @ {price}")
+            
+            # Call trade executed handler if set
+            if self.on_trade_executed:
+                self.on_trade_executed(symbol, side, quantity, price)
+        
+        except Exception as e:
+            self.logger.error(f"Error opening position for {symbol}: {e}")
+            
+            # Call error handler if set
+            if self.on_error:
+                self.on_error(symbol, str(e))
+    
+    def _close_position(self, symbol: str, quantity: float, price: float) -> None:
+        """
+        Close an existing trading position.
+        
+        Args:
+            symbol: Trading symbol
+            quantity: Position quantity
+            price: Current price
+        """
+        try:
+            # Determine side (opposite of current position)
+            position = self.positions.get(symbol, {'total_base': 0})
+            current_position = position['total_base']
+            
+            side = 'sell' if current_position > 0 else 'buy'
+            
+            # Create order
+            order = Order(
+                symbol=symbol,
+                order_type='market',
+                side=side,
+                price=price,
+                quantity=abs(quantity),
+                timestamp=pd.Timestamp.now()
+            )
+            
+            # Place order
+            response = self.exchange.place_order(order)
+            
+            # Store active order
+            order_id = response.get('orderId')
+            self.active_orders[order_id] = {
+                'symbol': symbol,
+                'side': side,
+                'quantity': quantity,
+                'price': price,
+                'timestamp': order.timestamp
+            }
+            
+            self.logger.info(f"Closed position for {symbol}: {quantity} @ {price}")
+            
+            # Call trade executed handler if set
+            if self.on_trade_executed:
+                self.on_trade_executed(symbol, side, quantity, price)
+        
+        except Exception as e:
+            self.logger.error(f"Error closing position for {symbol}: {e}")
+            
+            # Call error handler if set
+            if self.on_error:
+                self.on_error(symbol, str(e))
+    
+    def _check_active_orders(self) -> None:
+        """Check status of active orders and update accordingly."""
+        if not self.active_orders:
+            return
+        
+        # Copy keys to avoid modification during iteration
+        order_ids = list(self.active_orders.keys())
+        
+        for order_id in order_ids:
+            order_info = self.active_orders[order_id]
+            symbol = order_info['symbol']
+            
+            try:
+                # Get order status
+                status = self.exchange.get_order_status(order_id, symbol)
+                
+                # Check if order is filled
+                if status['status'] == 'FILLED':
+                    # Add to trade history
+                    trade = {
+                        'symbol': symbol,
+                        'side': order_info['side'],
+                        'quantity': float(status['executedQty']),
+                        'price': float(status['price']) if float(status['price']) > 0 else float(status['cummulativeQuoteQty']) / float(status['executedQty']),
+                        'timestamp': pd.to_datetime(status['time'], unit='ms'),
+                        'order_id': order_id
+                    }
+                    
+                    self.trade_history.append(trade)
+                    
+                    # Remove from active orders
+                    del self.active_orders[order_id]
+                    
+                    self.logger.info(f"Order {order_id} for {symbol} filled")
+                    
+                    # Update positions
+                    self._update_positions()
+                    
+                    # Call position changed handler if set
+                    if self.on_position_changed:
+                        self.on_position_changed(symbol)
+                
+                # Cancel if too old (5 minutes)
+                elif pd.Timestamp.now() - order_info['timestamp'] > pd.Timedelta(minutes=5):
+                    self.exchange.cancel_order(order_id, symbol)
+                    del self.active_orders[order_id]
+                    
+                    self.logger.info(f"Order {order_id} for {symbol} canceled due to timeout")
+            
+            except Exception as e:
+                self.logger.error(f"Error checking order {order_id} for {symbol}: {e}")
+    
+    def _calculate_performance_metrics(self) -> None:
+        """Calculate performance metrics from trade history."""
+        if not self.trade_history:
+            return
+        
+        # Group trades by symbol
+        symbol_trades = {}
+        for trade in self.trade_history:
+            symbol = trade['symbol']
+            
+            if symbol not in symbol_trades:
+                symbol_trades[symbol] = []
+            
+            symbol_trades[symbol].append(trade)
+        
+        # Calculate metrics for each symbol
+        for symbol, trades in symbol_trades.items():
+            if len(trades) < 2:
+                continue
+            
+            # Calculate P&L
+            pnl = 0
+            for i in range(1, len(trades), 2):
+                if i >= len(trades):
+                    break
+                
+                # Get trade pair
+                entry = trades[i-1]
+                exit = trades[i]
+                
+                # Calculate profit
+                if entry['side'] == 'buy':
+                    profit = (exit['price'] - entry['price']) * entry['quantity']
+                else:
+                    profit = (entry['price'] - exit['price']) * entry['quantity']
+                
+                pnl += profit
+            
+            # Calculate win rate
+            wins = 0
+            for i in range(1, len(trades), 2):
+                if i >= len(trades):
+                    break
+                
+                # Get trade pair
+                entry = trades[i-1]
+                exit = trades[i]
+                
+                # Calculate profit
+                if entry['side'] == 'buy':
+                    profit = exit['price'] - entry['price']
+                else:
+                    profit = entry['price'] - exit['price']
+                
+                if profit > 0:
+                    wins += 1
+            
+            # Store metrics
+            self.performance_metrics[symbol] = {
+                'pnl': pnl,
+                'num_trades': len(trades) // 2,
+                'win_rate': wins / (len(trades) // 2) if len(trades) >= 2 else 0
+            }
+    
     def start(self) -> None:
-        """Start the live trading loop with improved monitoring and safeguards."""
+        """Start the live trading loop."""
         if self.running:
             self.logger.warning("Live trader already running")
             return
         
         self.logger.info("Starting live trader")
         
-        # Load models if not already loaded
-        model_count = sum(1 for k in self.model_manager.models.keys() if any(symbol in k for symbol in self.symbols))
-        if model_count < len(self.symbols) * len(self.timeframes):
-            self.logger.info("Models not fully loaded, loading now...")
-            if not self.load_trading_models(self.symbols, self.timeframes):
-                self.logger.error("Failed to load all models, aborting")
-                return
+        # Load models
+        if not self.load_models():
+            self.logger.error("Failed to load models, aborting")
+            return
         
-        # Initialize strategies if not already initialized
-        if len(self.strategies) < len(self.symbols) * len(self.timeframes):
-            self.logger.info("Strategies not fully initialized, initializing now...")
-            if not self.initialize_strategies():
-                self.logger.error("Failed to initialize all strategies, aborting")
-                return
+        # Initialize strategies
+        if not self.initialize_strategies():
+            self.logger.error("Failed to initialize strategies, aborting")
+            return
         
-        # Update positions to get initial state
+        # Update positions
         self._update_positions()
         
         # Start trading loop
         self.running = True
         self.paused = False
         
-        # Print initial position summary
-        self.logger.info("Initial positions:")
-        for symbol, position in self.positions.items():
-            self.logger.info(f"  {symbol}: {position['total_base']} {position.get('base_asset', '')}")
-        
         try:
-            # Main trading loop
-            iteration = 0
             while self.running:
                 if not self.paused:
-                    iteration += 1
-                    self.logger.info(f"Trading iteration {iteration}")
-                    
                     # Get signals
                     signals = self._get_current_signals()
-                    
-                    # Log all signals
-                    if signals:
-                        self.logger.info("Current signals:")
-                        for model_id, signal in signals.items():
-                            signal_text = "BUY" if signal > 0 else "SELL" if signal < 0 else "NEUTRAL"
-                            self.logger.info(f"  {model_id}: {signal_text} ({signal})")
-                    else:
-                        self.logger.warning("No signals generated")
                     
                     # Execute signals
                     self._execute_signals(signals)
@@ -1196,25 +1307,15 @@ class LiveTrader:
                     
                     # Calculate performance metrics
                     self._calculate_performance_metrics()
-                    
-                    # Log current performance
-                    if self.performance_metrics:
-                        self.logger.info("Current performance:")
-                        for symbol, metrics in self.performance_metrics.items():
-                            self.logger.info(f"  {symbol}: PnL=${metrics['pnl']:.2f}, Trades={metrics['num_trades']}, Win={metrics['win_rate']*100:.1f}%")
                 
-                # Determine sleep time based on shortest timeframe
-                min_interval = min(self._get_timeframe_seconds(tf) for tf in self.timeframes)
-                sleep_time = min(min_interval / 4, 60)  # Max 60 seconds, min 25% of smallest timeframe
-                
-                self.logger.info(f"Sleeping for {sleep_time:.1f} seconds...")
-                time.sleep(sleep_time)
+                # Sleep to avoid API rate limits
+                time.sleep(10)
         
         except KeyboardInterrupt:
             self.logger.info("Live trader stopped by user")
         
         except Exception as e:
-            self.logger.error(f"Error in live trading loop: {e}", exc_info=True)
+            self.logger.error(f"Error in live trading loop: {e}")
             
             # Call error handler if set
             if self.on_error:
@@ -1224,24 +1325,90 @@ class LiveTrader:
             self.running = False
             self.logger.info("Live trader stopped")
     
-    def _get_timeframe_seconds(self, timeframe: str) -> int:
+    def stop(self) -> None:
+        """Stop the live trading loop."""
+        self.running = False
+        self.logger.info("Stopping live trader")
+    
+    def pause(self) -> None:
+        """Pause trading temporarily."""
+        self.paused = True
+        self.logger.info("Live trader paused")
+    
+    def resume(self) -> None:
+        """Resume trading after pause."""
+        self.paused = False
+        self.logger.info("Live trader resumed")
+    
+    def get_status(self) -> Dict[str, Any]:
         """
-        Convert timeframe to seconds.
+        Get current trading status.
+        
+        Returns:
+            Dictionary with status information
+        """
+        return {
+            'running': self.running,
+            'paused': self.paused,
+            'positions': self.positions,
+            'active_orders': self.active_orders,
+            'trade_history': self.trade_history,
+            'performance_metrics': self.performance_metrics
+        }
+    
+    def get_performance_report(self) -> Dict[str, Any]:
+        """
+        Generate a performance report.
+        
+        Returns:
+            Dictionary with performance metrics
+        """
+        # Calculate overall metrics
+        total_pnl = sum(metrics['pnl'] for metrics in self.performance_metrics.values())
+        total_trades = sum(metrics['num_trades'] for metrics in self.performance_metrics.values())
+        
+        # Calculate overall win rate
+        if total_trades > 0:
+            win_trades = sum(metrics['win_rate'] * metrics['num_trades'] for metrics in self.performance_metrics.values())
+            overall_win_rate = win_trades / total_trades
+        else:
+            overall_win_rate = 0
+        
+        return {
+            'total_pnl': total_pnl,
+            'total_trades': total_trades,
+            'overall_win_rate': overall_win_rate,
+            'by_symbol': self.performance_metrics,
+            'trade_history': self.trade_history
+        }
+    
+    def save_report(self, filename: Optional[str] = None) -> str:
+        """
+        Save performance report to file.
         
         Args:
-            timeframe: Timeframe string (e.g., '1h', '15m', '1d')
+            filename: Output filename (default: auto-generated)
             
         Returns:
-            Number of seconds
+            Path to saved report
         """
-        if timeframe.endswith('m'):
-            return int(timeframe[:-1]) * 60
-        elif timeframe.endswith('h'):
-            return int(timeframe[:-1]) * 3600
-        elif timeframe.endswith('d'):
-            return int(timeframe[:-1]) * 86400
-        else:
-            return 3600  # Default to 1 hour
+        # Generate report
+        report = self.get_performance_report()
+        
+        # Create filename if not provided
+        if not filename:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"live_trading_report_{timestamp}.json"
+        
+        # Create full path
+        report_path = os.path.join(self.results_dir, filename)
+        
+        # Save report
+        with open(report_path, 'w') as f:
+            json.dump(report, f, indent=2, default=str)
+        
+        self.logger.info(f"Performance report saved to {report_path}")
+        return report_path
 
 def run_live_trading(args: argparse.Namespace) -> int:
     """

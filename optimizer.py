@@ -4,7 +4,6 @@ Hyperparameter optimization module for the AI trading bot.
 import logging
 import os
 import json
-import time
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple, Union, Any, Callable
 
@@ -26,83 +25,6 @@ from strategy import MLTradingStrategy
 from backtest import Backtester
 
 logger = logging.getLogger(__name__)
-
-class OptimizationProgressCallback:
-    """Callback to track and display optimization progress."""
-    
-    def __init__(self, n_trials, log_interval=1):
-        """
-        Initialize the progress tracker.
-        
-        Args:
-            n_trials: Total number of optimization trials
-            log_interval: Interval for logging progress (in seconds)
-        """
-        self.n_trials = n_trials
-        self.log_interval = log_interval
-        self.start_time = time.time()
-        self.last_log_time = self.start_time
-        self.trials_completed = 0
-        self.best_value = None
-        self.trial_times = []
-        
-    def __call__(self, study, trial):
-        """
-        Update progress after each trial.
-        
-        Args:
-            study: Optuna study object
-            trial: Completed trial
-        """
-        # Update counters
-        self.trials_completed += 1
-        current_time = time.time()
-        trial_time = current_time - (self.last_log_time if self.trials_completed > 1 else self.start_time)
-        self.trial_times.append(trial_time)
-        self.last_log_time = current_time
-        
-        # Update best value
-        if self.best_value is None or study.best_value > self.best_value:
-            self.best_value = study.best_value
-        
-        # Log progress if interval passed or on first/last trial
-        if (current_time - self.start_time >= self.log_interval or 
-            self.trials_completed == 1 or 
-            self.trials_completed == self.n_trials):
-            
-            # Calculate progress
-            progress_pct = self.trials_completed / self.n_trials * 100
-            elapsed_time = current_time - self.start_time
-            
-            # Estimate remaining time
-            if self.trials_completed > 0:
-                avg_time_per_trial = elapsed_time / self.trials_completed
-                remaining_trials = self.n_trials - self.trials_completed
-                estimated_remaining = avg_time_per_trial * remaining_trials
-            else:
-                estimated_remaining = 0
-            
-            # Format times
-            elapsed_str = self.format_time(elapsed_time)
-            remaining_str = self.format_time(estimated_remaining)
-            
-            # Log progress
-            logger.info(
-                f"Optimization progress: {self.trials_completed}/{self.n_trials} trials "
-                f"({progress_pct:.1f}%) - Elapsed: {elapsed_str}, Remaining: {remaining_str}"
-            )
-            logger.info(f"Best value so far: {self.best_value:.6f} - Last trial time: {trial_time:.2f}s")
-            
-            # Reset log time
-            self.last_log_time = current_time
-    
-    def format_time(self, seconds):
-        """Format seconds into a readable time string."""
-        hours, remainder = divmod(int(seconds), 3600)
-        minutes, seconds = divmod(remainder, 60)
-        return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
-
-
 
 class ModelOptimizer:
     """
@@ -169,69 +91,52 @@ class ModelOptimizer:
         
         logger.info(f"Prepared {len(self.X)} sequences with {self.X.shape[1]} time steps and {self.X.shape[2]} features")
     
-    def optimize(self) -> Dict[str, Any]:
+    def objective(self, trial: optuna.Trial) -> float:
         """
-        Run hyperparameter optimization with performance enhancements and progress tracking.
+        Objective function for hyperparameter optimization.
         
+        Args:
+            trial: Optuna trial
+            
         Returns:
-            Dictionary of best parameters
+            Performance metric value
         """
-        # Prepare data if not already prepared
-        if self.data is None:
-            self.prepare_data()
+        # Define hyperparameters to optimize
+        model_type = trial.suggest_categorical('model_type', ['lstm', 'gru', 'cnn'])
         
-        # Use TPE sampler which is more efficient than random sampling
-        from optuna.samplers import TPESampler
-        sampler = TPESampler(n_startup_trials=min(10, self.n_trials // 2))
+        # Number of layers and units
+        n_layers = trial.suggest_int('n_layers', 1, 3)
+        hidden_layers = []
+        for i in range(n_layers):
+            units = trial.suggest_int(f'units_layer_{i}', 16, 256, log=True)
+            hidden_layers.append(units)
         
-        # Create study with pruning
-        from optuna.pruners import MedianPruner
-        pruner = MedianPruner(n_startup_trials=5, n_warmup_steps=5)
+        # Regularization
+        dropout_rate = trial.suggest_float('dropout_rate', 0.1, 0.5)
         
-        study = optuna.create_study(
-            direction='maximize',
-            sampler=sampler,
-            pruner=pruner
-        )
+        # Optimization
+        learning_rate = trial.suggest_float('learning_rate', 1e-5, 1e-2, log=True)
+        batch_size = trial.suggest_int('batch_size', 16, 128, log=True)
         
-        # Create progress callback
-        progress_callback = OptimizationProgressCallback(n_trials=self.n_trials, log_interval=60)  # Log every minute
+        # Cross-validation
+        cv_scores = []
         
-        # Define simplified objective function
-        def simplified_objective(trial):
-            """Simplified objective for quicker optimization."""
-            start_time = time.time()
+        # Split data into folds
+        fold_size = len(self.X) // self.cv_folds
+        
+        for fold in range(self.cv_folds):
+            # Create validation indices
+            val_start = fold * fold_size
+            val_end = (fold + 1) * fold_size
             
-            # Use a smaller subset of hyperparameters
-            model_type = trial.suggest_categorical('model_type', ['lstm', 'gru'])
+            # Split data
+            train_indices = list(range(0, val_start)) + list(range(val_end, len(self.X)))
+            val_indices = list(range(val_start, val_end))
             
-            # Simplified architecture
-            n_layers = 2  # Fixed to 2 layers for simplicity
-            hidden_layers = []
-            for i in range(n_layers):
-                # More restricted range
-                units = trial.suggest_int(f'units_layer_{i}', 32, 128, log=True)
-                hidden_layers.append(units)
+            X_train, y_train = self.X[train_indices], self.y[train_indices]
+            X_val, y_val = self.X[val_indices], self.y[val_indices]
             
-            # Regularization
-            dropout_rate = trial.suggest_float('dropout_rate', 0.1, 0.5)
-            
-            # Optimization
-            learning_rate = trial.suggest_float('learning_rate', 1e-4, 1e-2, log=True)
-            batch_size = trial.suggest_int('batch_size', 16, 64, log=True)
-            
-            # Only use 2-fold CV for faster evaluation
-            cv_folds = min(self.cv_folds, 2)
-            
-            # Log current trial parameters
-            trial_info = (
-                f"Trial {trial.number + 1}/{self.n_trials}: {model_type}, "
-                f"layers={hidden_layers}, dropout={dropout_rate:.2f}, "
-                f"lr={learning_rate:.6f}, batch_size={batch_size}"
-            )
-            logger.info(f"Starting {trial_info}")
-            
-            # Create model and evaluate
+            # Create and train model
             model = DeepLearningModel(
                 input_shape=(self.X.shape[1], self.X.shape[2]),
                 output_dim=self.y.shape[1],
@@ -241,79 +146,63 @@ class ModelOptimizer:
                 learning_rate=learning_rate
             )
             
-            # Use smaller subset of data for initial trials
-            use_subset = trial.number < self.n_trials // 2
-            if use_subset:
-                subset_size = len(self.X) // 2
-                X_subset = self.X[:subset_size]
-                y_subset = self.y[:subset_size]
-                logger.info(f"Using data subset of size {subset_size} for trial {trial.number + 1}")
-            else:
-                X_subset = self.X
-                y_subset = self.y
-            
-            # Single train/val split for speed
-            from sklearn.model_selection import train_test_split
-            X_train, X_val, y_train, y_val = train_test_split(
-                X_subset, y_subset, test_size=0.2, random_state=42
-            )
-            
-            # Train with early stopping and fewer epochs
+            # Train model
             history = model.train(
                 X_train=X_train,
                 y_train=y_train,
                 X_val=X_val,
                 y_val=y_val,
-                epochs=20,  # Reduced epochs for faster optimization
+                epochs=10,  # Reduced epochs for faster optimization
                 batch_size=batch_size,
-                optimize_for_hardware=True  # Use hardware optimization
+                callbacks=None,
+                save_path=None
             )
             
             # Evaluate model
-            metrics = model.evaluate(X_val, y_val)
+            val_metrics = model.evaluate(X_val, y_val)
             
-            # Log trial results
-            trial_time = time.time() - start_time
-            logger.info(
-                f"Completed {trial_info} in {trial_time:.2f}s - "
-                f"MSE: {metrics['mse']:.6f}, MAE: {metrics['mae']:.6f}"
-            )
+            # Get performance metric
+            if self.metric == 'mae':
+                score = -val_metrics['mae']  # Negative because we want to maximize
+            elif self.metric == 'mse':
+                score = -val_metrics['mse']
+            elif self.metric == 'rmse':
+                score = -val_metrics['rmse']
+            else:
+                raise ValueError(f"Unsupported metric: {self.metric}")
             
-            # Clear memory
-            from utils import check_memory_usage, clear_keras_session
-            check_memory_usage(threshold_gb=0.8, clear_if_high=True)
-            clear_keras_session()
-            
-            # Return negative MSE (to maximize)
-            return -metrics['mse']
+            cv_scores.append(score)
         
-        # Run optimization with progress callback
-        logger.info(f"Starting optimization with {self.n_trials} trials")
-        start_time = time.time()
+        # Return average score across folds
+        avg_score = np.mean(cv_scores)
         
-        study.optimize(simplified_objective, n_trials=self.n_trials, callbacks=[progress_callback])
+        return avg_score
+    
+    def optimize(self) -> Dict[str, Any]:
+        """
+        Run hyperparameter optimization.
         
-        # Log total optimization time
-        total_time = time.time() - start_time
-        hours, remainder = divmod(int(total_time), 3600)
-        minutes, seconds = divmod(remainder, 60)
-        logger.info(f"Optimization completed in {hours:02d}:{minutes:02d}:{seconds:02d}")
+        Returns:
+            Dictionary of best parameters
+        """
+        # Prepare data if not already prepared
+        if self.data is None:
+            self.prepare_data()
         
-        # Log final results
+        # Create study
+        study = optuna.create_study(direction='maximize')
+        
+        # Run optimization
+        study.optimize(self.objective, n_trials=self.n_trials)
+        
+        # Get best parameters
         best_params = study.best_params
-        best_value = study.best_value
-        
-        logger.info("======= Optimization Results =======")
-        logger.info(f"Best MSE: {-best_value:.6f}")
-        logger.info(f"Best parameters: {json.dumps(best_params, indent=2)}")
-        logger.info("===================================")
         
         # Save results
         self.save_results(study)
         
         return best_params
-
-
+    
     def save_results(self, study: optuna.Study) -> str:
         """
         Save optimization results.

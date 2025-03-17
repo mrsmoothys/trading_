@@ -99,7 +99,8 @@ class DeepLearningModel:
                 model.add(BatchNormalization())
                 model.add(Dropout(self.dropout_rate))
 
-            # Final LSTM layer - do NOT return sequence, so that output shape is (batch_size, units)
+
+                # Final LSTM layer - do NOT return sequence, so that output shape is (batch_size, units)
             model.add(LSTM(
                 self.hidden_layers[-1],
                 return_sequences=False,
@@ -122,11 +123,11 @@ class DeepLearningModel:
         
         # Final dense layers
         if len(self.hidden_layers) > 1:
-            model.add(Dense(self.hidden_layers[-1] // 2, activation='relu'))
+            model.add(Dense(self.hidden_layers[-1], activation='relu'))
             model.add(BatchNormalization())
             model.add(Dropout(self.dropout_rate))
         
-        # Output layer - use linear activation for regression tasks
+        # Output layer
         model.add(Dense(self.output_dim, activation='linear'))
         
         return model
@@ -315,7 +316,7 @@ class DeepLearningModel:
         # self.input_shape is a tuple like (lookback_window, num_features)
         num_features = self.input_shape[1]
 
-        # Adjust hidden layer sizes based on feature count if needed
+            # Adjust hidden layer sizes based on feature count if needed
         if num_features > 50:
             # For high-dimensional inputs, use larger hidden layers
             adjusted_hidden_layers = [int(size * 1.5) for size in self.hidden_layers]
@@ -327,7 +328,8 @@ class DeepLearningModel:
             self.hidden_layers = adjusted_hidden_layers
             logger.info(f"Adjusted hidden layers for small feature set: {self.hidden_layers}")
             
-        # Build model based on selected type
+          # Build model based on selected type
+
         if self.model_type == 'lstm':
             self.model = self._build_lstm_model()
         elif self.model_type == 'gru':
@@ -341,10 +343,10 @@ class DeepLearningModel:
         else:
             raise ValueError(f"Unsupported model type: {self.model_type}")
         
-        # Compile model with Huber loss - better for financial data with outliers
+        # Compile model
         self.model.compile(
             optimizer=Adam(learning_rate=self.learning_rate),
-            loss=Huber(),  # Changed from MSE to Huber
+            loss=Huber(),
             metrics=['mae', 'mse']
         )
         
@@ -360,11 +362,10 @@ class DeepLearningModel:
         epochs: int = EPOCHS,
         batch_size: int = BATCH_SIZE,
         callbacks: List[tf.keras.callbacks.Callback] = None,
-        save_path: Optional[str] = None,
-        optimize_for_hardware: bool = True
+        save_path: Optional[str] = None
     ) -> Dict[str, List[float]]:
         """
-        Train the model with hardware optimizations.
+        Train the model.
         
         Args:
             X_train: Training features
@@ -375,7 +376,6 @@ class DeepLearningModel:
             batch_size: Batch size for training
             callbacks: List of Keras callbacks
             save_path: Path to save the model
-            optimize_for_hardware: Whether to optimize for current hardware
             
         Returns:
             Training history
@@ -383,42 +383,33 @@ class DeepLearningModel:
         if self.model is None:
             raise ValueError("Model not initialized. Call build_model() first.")
         
-        # Apply hardware optimization if requested
-        if optimize_for_hardware:
-            optimal_batch = self.optimize_for_hardware()
-            batch_size = min(batch_size, optimal_batch)
-            logger.info(f"Using batch size of {batch_size} based on hardware optimization")
-        
         logger.info(f"Training {self.model_type} model with {len(X_train)} samples")
         
         # Create callbacks if not provided
         if callbacks is None:
             callbacks = []
             
-            # Early stopping with more aggressive settings
+            # Early stopping
             callbacks.append(EarlyStopping(
                 monitor='val_loss',
-                patience=max(5, EARLY_STOPPING_PATIENCE // 2),  # More aggressive early stopping
-                restore_best_weights=True,
-                min_delta=0.0005  # Minimum improvement required (0.05%)
+                patience=EARLY_STOPPING_PATIENCE,
+                restore_best_weights=True
             ))
             
-            # Reduce learning rate on plateau with more aggressive settings
+            # Reduce learning rate on plateau
             callbacks.append(ReduceLROnPlateau(
                 monitor='val_loss',
                 factor=0.5,
-                patience=max(3, EARLY_STOPPING_PATIENCE // 3),  # More aggressive LR reduction
-                min_lr=1e-6,
-                verbose=1
+                patience=EARLY_STOPPING_PATIENCE // 2,
+                min_lr=1e-6
             ))
             
-            # TensorBoard logging (optional for performance)
-            if int(os.environ.get('ENABLE_TENSORBOARD', '0')):
-                log_dir = os.path.join('logs', f"{self.model_type}_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}")
-                callbacks.append(TensorBoard(
-                    log_dir=log_dir,
-                    histogram_freq=1
-                ))
+            # TensorBoard logging
+            log_dir = os.path.join('logs', f"{self.model_type}_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}")
+            callbacks.append(TensorBoard(
+                log_dir=log_dir,
+                histogram_freq=1
+            ))
             
             # Save best model
             if save_path:
@@ -431,7 +422,7 @@ class DeepLearningModel:
                     verbose=1
                 ))
         
-        # Train the model - without multiprocessing parameters which may not be supported
+        # Train the model
         history = self.model.fit(
             X_train, y_train,
             validation_data=(X_val, y_val),
@@ -500,6 +491,7 @@ class DeepLearningModel:
         # Create directory if it doesn't exist
         os.makedirs(os.path.dirname(path), exist_ok=True)
         
+        
         # Change file extension from .h5 to .keras if needed
         if path.endswith('.h5'):
             keras_path = path.replace('.h5', '.keras')
@@ -560,41 +552,6 @@ class DeepLearningModel:
             logger.warning(f"No metadata found for model at {path}")
         
         return metadata
-    
-    def optimize_for_hardware(self):
-        """
-        Optimize model configuration for current hardware.
-        Adjusts batch size and other parameters for better performance.
-        """
-        import multiprocessing
-        import psutil
-        
-        # Get system information
-        cpu_count = multiprocessing.cpu_count()
-        memory_gb = psutil.virtual_memory().total / (1024 ** 3)
-        
-        # Log hardware information
-        logger.info(f"Optimizing for hardware: {cpu_count} CPU cores, {memory_gb:.1f} GB RAM")
-        
-        # Adjust batch size based on available memory
-        if memory_gb < 4:  # Low memory (<4GB)
-            optimal_batch = 16
-        elif memory_gb < 8:  # Medium memory (4-8GB)
-            optimal_batch = 32
-        else:  # High memory (>8GB)
-            optimal_batch = 64
-        
-        # Adjust based on CPU cores (more cores can handle larger batches)
-        if cpu_count <= 2:
-            optimal_batch = min(optimal_batch, 32)
-        
-        # Adjust model complexity based on available resources
-        if memory_gb < 4 or cpu_count <= 2:
-            # Reduce model complexity for low-resource machines
-            self.hidden_layers = [max(layer // 2, 16) for layer in self.hidden_layers]
-            logger.info(f"Reduced model complexity for low-resource machine: {self.hidden_layers}")
-        
-        return optimal_batch
 
 class ModelManager:
     """

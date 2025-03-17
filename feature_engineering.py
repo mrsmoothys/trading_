@@ -3,7 +3,7 @@ Feature engineering module for the AI trading bot.
 Generates technical indicators and advanced features.
 """
 import logging
-from typing import Dict, List, Optional, Tuple, Union, Callable, Any
+from typing import Dict, List, Optional, Tuple, Union, Callable
 
 import numpy as np
 import pandas as pd
@@ -530,122 +530,90 @@ class FeatureEngineer:
 
 
 
-def apply_pca_reduction(data, n_components=30, variance_threshold=0.95):
-    """
-    Reduce feature dimensionality using PCA with enhanced efficiency.
+def apply_pca_reduction(data, n_components=30):
+    # Force n_components to exactly 30 for consistency
+    n_components = 30
     
-    Args:
-        data: DataFrame with OHLCV and technical features
-        n_components: Target number of principal components (max)
-        variance_threshold: Minimum explained variance to preserve (0-1)
-        
-    Returns:
-        Tuple of (reduced_dataframe, pca_model, scaler_model)
-    """
-    # Separate OHLCV and returns columns
-    keep_columns = ['open', 'high', 'low', 'close', 'volume', 
-                   'close_return', 'log_return']
+    # Separate OHLCV columns
+    ohlcv = data[['open', 'high', 'low', 'close', 'volume']].copy()
     
-    basic_data = data[keep_columns].copy() if all(col in data.columns for col in keep_columns) else data[['open', 'high', 'low', 'close', 'volume']].copy()
-    
-    # Get feature columns only
+    # Get feature columns only (exclude OHLCV and non-numeric columns)
     feature_cols = []
     for col in data.columns:
-        if col not in basic_data.columns:
+        if col not in ['open', 'high', 'low', 'close', 'volume']:
             # Check if column is numeric
             if pd.api.types.is_numeric_dtype(data[col]):
                 feature_cols.append(col)
             else:
                 logging.warning(f"Excluding non-numeric column from PCA: {col}")
+                # Convert to numeric if possible
+                try:
+                    data[col] = pd.to_numeric(data[col], errors='coerce')
+                    feature_cols.append(col)
+                except:
+                    pass
     
-    # Pre-filter features based on variance to remove near-constant features
-    features = data[feature_cols].copy()
-    features.replace([np.inf, -np.inf], np.nan, inplace=True)
-    features.fillna(features.mean(), inplace=True)
-    
-    # Remove low-variance features (nearly constant features provide little information)
-    from sklearn.feature_selection import VarianceThreshold
-    min_variance = 0.01  # Threshold for variance filtering
-    selector = VarianceThreshold(threshold=min_variance)
-    
-    try:
-        features_values = selector.fit_transform(features)
-        # Get selected feature names
-        selected_indices = selector.get_support(indices=True)
-        selected_features = [feature_cols[i] for i in selected_indices]
-        
-        if len(selected_features) > 0:
-            features = features[selected_features]
-            logging.info(f"Reduced features from {len(feature_cols)} to {len(selected_features)} using variance threshold")
-        else:
-            # If all features are removed, keep original features
-            logging.warning("All features would be removed by variance threshold, keeping original features")
-            features = data[feature_cols]
-    except Exception as e:
-        logging.warning(f"Error in variance filtering: {e}, using all features")
-        features = data[feature_cols]
-    
-    # Standardize features
-    from sklearn.preprocessing import StandardScaler
-    scaler = StandardScaler()
-    features_scaled = scaler.fit_transform(features)
-    
-    # Apply PCA with automatic component selection based on explained variance
-    from sklearn.decomposition import PCA
-    
-    # First run with high number of components to analyze explained variance
-    initial_components = min(n_components, features_scaled.shape[1], features_scaled.shape[0])
-    if initial_components < 2:
-        # Not enough data for PCA, return original data
+    # Ensure we have features to process
+    if not feature_cols:
+        logging.warning("No numeric features available for PCA")
         return data, None, None
     
-    pca_initial = PCA(n_components=initial_components)
-    pca_initial.fit(features_scaled)
+    # Get features and handle extreme values
+    features = data[feature_cols].copy()
     
-    # Determine optimal number of components based on explained variance
-    explained_variance_ratio = pca_initial.explained_variance_ratio_
-    cumulative_variance = np.cumsum(explained_variance_ratio)
+    # Replace infinity with NaN
+    features.replace([np.inf, -np.inf], np.nan, inplace=True)
     
-    # Find number of components that explain at least variance_threshold of the variance
-    optimal_components = next((i for i, var in enumerate(cumulative_variance) if var >= variance_threshold), initial_components)
-    optimal_components = min(optimal_components + 1, initial_components)  # Add one for safety, but don't exceed max
+    # Fill NaN values with column means
+    for col in features.columns:
+        mean_val = features[col].mean()
+        if pd.isna(mean_val):  # If mean is NaN (all values are NaN)
+            features[col] = 0  # Replace with zero
+        else:
+            features[col] = features[col].fillna(mean_val)
     
-    logging.info(f"Selected {optimal_components} components explaining {cumulative_variance[optimal_components-1]*100:.1f}% of variance")
+    # Standardize features - with explicit type checking
+    try:
+        scaler = StandardScaler()
+        features_scaled = scaler.fit_transform(features)
+    except Exception as e:
+        logging.error(f"Error during standardization: {e}")
+        # Check for any string values
+        for col in features.columns:
+            if features[col].dtype == object:
+                logging.error(f"Column {col} contains string values")
+                features[col] = pd.to_numeric(features[col], errors='coerce').fillna(0)
+        # Try again
+        scaler = StandardScaler()
+        features_scaled = scaler.fit_transform(features)
     
-    # If the optimal number is different from initial, rerun PCA
-    if optimal_components < initial_components:
-        pca = PCA(n_components=optimal_components)
-        components = pca.fit_transform(features_scaled)
-    else:
-        pca = pca_initial
-        components = pca_initial.transform(features_scaled)
+    # Apply PCA
+    pca = PCA(n_components=n_components)
+    components = pca.fit_transform(features_scaled)
     
-    # Create component dataframe
+    # Create component dataframe with exactly n_components
     component_df = pd.DataFrame(
         components, 
-        columns=[f'pc_{i+1}' for i in range(components.shape[1])],
+        columns=[f'pc_{i+1}' for i in range(n_components)],
         index=data.index
     )
     
-    # Combine with basic data (OHLCV + returns)
-    reduced_data = pd.concat([basic_data, component_df], axis=1)
+    # Combine with OHLCV
+    reduced_data = pd.concat([ohlcv, component_df], axis=1)
     
     return reduced_data, pca, scaler
 
 
-def generate_features(df: pd.DataFrame, feature_sets: Dict[str, List[str]] = None, apply_pca: bool = False, n_components: int = 30) -> Union[pd.DataFrame, Tuple[pd.DataFrame, Any, Any]]:
+def generate_features(df: pd.DataFrame, feature_sets: Dict[str, List[str]] = None, apply_pca: bool = False, n_components: int = 30) -> pd.DataFrame:
     """
     Generate features for the given DataFrame.
     
     Args:
         df: DataFrame with OHLCV data
         feature_sets: Dictionary of feature sets to generate
-        apply_pca: Whether to apply PCA
-        n_components: Number of PCA components
         
     Returns:
-        If apply_pca=False: DataFrame with generated features
-        If apply_pca=True: Tuple of (DataFrame, pca_model, scaler_model)
+        DataFrame with generated features
     """
     if feature_sets is None:
         feature_sets = FEATURE_SETS
@@ -655,15 +623,6 @@ def generate_features(df: pd.DataFrame, feature_sets: Dict[str, List[str]] = Non
     
     # Generate all features
     processed_df = feature_engineer.generate_all_features()
-    
-    # Add returns-based features if not present
-    if 'close_return' not in processed_df.columns:
-        processed_df['close_return'] = processed_df['close'].pct_change()
-        processed_df['log_return'] = np.log(processed_df['close'] / processed_df['close'].shift(1))
-    
-    # Add volatility-normalized returns
-    rolling_std = processed_df['close'].rolling(20).std()
-    processed_df['norm_return'] = processed_df['close_return'] / (rolling_std / processed_df['close'])
     
     # Ensure all columns are numeric before PCA
     for col in processed_df.columns:
@@ -675,106 +634,20 @@ def generate_features(df: pd.DataFrame, feature_sets: Dict[str, List[str]] = Non
                 # Remove problematic column
                 processed_df = processed_df.drop(col, axis=1)
 
-    # Apply PCA if requested
+
+     # Apply PCA if requested
     if apply_pca:
         logger.info(f"Applying PCA to reduce features to {n_components} components")
-        processed_df, pca_model, scaler_model = apply_pca_reduction(processed_df, n_components)
+        processed_df = feature_engineer.apply_pca(n_components)
         
-        # Return DataFrame with PCA components and models
-        return processed_df, pca_model, scaler_model
+        # Store PCA and scaler models for later use
+        feature_engineer.pca_applied = True
+        return processed_df, feature_engineer.pca, feature_engineer.scaler
     
-    # Replace deprecated method with newer methods
+   # Replace deprecated method with newer methods
     processed_df = processed_df.ffill().fillna(0)
     
     return processed_df
-
-def prepare_data_for_pca_consistency(data, scaler_model, pca_model, original_features=None):
-    """
-    Ensure data has the correct features for PCA transformation, matching what was used during training.
-    
-    Args:
-        data: DataFrame with features to transform
-        scaler_model: Trained StandardScaler model
-        pca_model: Trained PCA model
-        original_features: List of original feature names used during PCA fitting
-        
-    Returns:
-        DataFrame with consistent PCA components
-    """
-    logger = logging.getLogger(__name__)
-    
-    # Extract OHLCV columns which we'll keep unchanged
-    ohlcv_columns = ['open', 'high', 'low', 'close', 'volume']
-    ohlcv_data = data[ohlcv_columns].copy()
-    
-    # Get the features the PCA model was fitted on
-    if original_features is None:
-        # If not explicitly provided, try to extract from the PCA model
-        if hasattr(pca_model, 'feature_names_in_'):
-            original_features = list(pca_model.feature_names_in_)
-            logger.info(f"Using {len(original_features)} features from PCA model's feature_names_in_")
-        else:
-            # If we don't have the feature names, we have to make an educated guess
-            # This is a fallback option and might not be accurate
-            original_features = [col for col in data.columns if col not in ohlcv_columns]
-            logger.warning(f"No feature list available, guessing {len(original_features)} features from current data")
-    
-    # Create a DataFrame with all required features, filling missing ones with zeros
-    feature_data = pd.DataFrame(index=data.index)
-    
-    # First, check for columns in data that weren't in the original feature set
-    extra_columns = [col for col in data.columns 
-                     if col not in ohlcv_columns and col not in original_features]
-    if extra_columns:
-        logger.warning(f"Found {len(extra_columns)} extra columns in backtesting data that will be ignored: {extra_columns[:5]}...")
-    
-    # Log summary of missing features
-    missing_features = [f for f in original_features if f not in data.columns]
-    if missing_features:
-        if len(missing_features) > 5:
-            logger.warning(f"Missing {len(missing_features)} features in backtesting data, will fill with zeros. First 5: {missing_features[:5]}...")
-        else:
-            logger.warning(f"Missing features in backtesting data, will fill with zeros: {missing_features}")
-    
-    # Create feature dataframe with exact same columns as during training
-    for feature in original_features:
-        if feature in data.columns:
-            feature_data[feature] = data[feature]
-        else:
-            # Feature is missing, fill with zeros 
-            feature_data[feature] = 0.0
-    
-    # Handle any NaN values in feature data using modern methods
-    feature_data = feature_data.replace([np.inf, -np.inf], np.nan)
-    # Use ffill and bfill instead of deprecated fillna method
-    feature_data = feature_data.ffill().bfill().fillna(0)
-    
-    try:
-        # Apply the same standardization
-        features_scaled = scaler_model.transform(feature_data)
-        
-        # Apply the same PCA transformation
-        pca_components = pca_model.transform(features_scaled)
-        
-        # Create component dataframe
-        component_df = pd.DataFrame(
-            pca_components,
-            columns=[f'pc_{i+1}' for i in range(pca_components.shape[1])],
-            index=data.index
-        )
-        
-        # Combine with OHLCV to create final data
-        result_data = pd.concat([ohlcv_data, component_df], axis=1)
-        
-        logger.info(f"Successfully prepared data with {pca_components.shape[1]} PCA components")
-        return result_data
-        
-    except Exception as e:
-        logger.error(f"Error during PCA transformation: {e}")
-        # Return original data if transformation fails
-        logger.warning("Returning original OHLCV data with no PCA components")
-        return ohlcv_data
-
 
 if __name__ == "__main__":
     # Test the feature generation process

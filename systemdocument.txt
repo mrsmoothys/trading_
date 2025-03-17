@@ -102,8 +102,3 @@ Key parameters can be adjusted in config.py, including:
 - Visualization options
 
 For further assistance, consult the individual module documentation or seek support in the project repository.
-
-
-
-
-python run_single.py --data-path /Users/mrsmoothy/Desktop/rsidtrade/binance_data_sets/BTCUSDT_1h_data_2021_to_2022.csv  --optimize-model --opt-trials 5 --epochs 1 --batch-size 32 --visualize --save-model 
