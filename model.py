@@ -472,12 +472,13 @@ class DeepLearningModel:
         
         return self.history
     
-    def predict(self, X: np.ndarray) -> np.ndarray:
+    def predict(self, X: np.ndarray, verbose: int = 0) -> np.ndarray:
         """
-        Make predictions with dimension checking.
+        Make predictions with enhanced dimension checking and error handling.
         
         Args:
             X: Input features with shape (samples, sequence_length, features)
+            verbose: Verbosity level for prediction
             
         Returns:
             Predicted values
@@ -485,10 +486,46 @@ class DeepLearningModel:
         if self.model is None:
             raise ValueError("Model not initialized. Call build_model() first.")
         
-        # Check and adjust feature dimensions if needed
-        X_adjusted = self._check_input_dimensions(X)
+        # Extensive dimension checking
+        if len(X.shape) != 3:
+            raise ValueError(f"Expected 3D input (samples, sequence_length, features), got shape {X.shape}")
         
-        return self.model.predict(X_adjusted)
+        # Check sequence length (lookback window)
+        expected_sequence_length = self.input_shape[0]
+        if X.shape[1] != expected_sequence_length:
+            logger.warning(f"Input sequence length mismatch: got {X.shape[1]}, expected {expected_sequence_length}")
+            if X.shape[1] < expected_sequence_length:
+                # Pad sequence if too short
+                padding = np.zeros((X.shape[0], expected_sequence_length - X.shape[1], X.shape[2]))
+                X_padded = np.concatenate([padding, X], axis=1)
+                logger.warning(f"Input padded to shape {X_padded.shape}")
+                X = X_padded
+            else:
+                # Truncate if too long
+                X = X[:, -expected_sequence_length:, :]
+                logger.warning(f"Input truncated to shape {X.shape}")
+        
+        # Check and adjust feature dimensions
+        expected_features = self.input_shape[1]
+        if X.shape[2] != expected_features:
+            logger.warning(f"Feature dimension mismatch: got {X.shape[2]}, expected {expected_features}")
+            X_adjusted = np.zeros((X.shape[0], X.shape[1], expected_features))
+            
+            # Copy over available features
+            common_features = min(X.shape[2], expected_features)
+            X_adjusted[:, :, :common_features] = X[:, :, :common_features]
+            
+            logger.warning(f"Input adjusted to shape {X_adjusted.shape}")
+            X = X_adjusted
+        
+        # Make prediction with try/except
+        try:
+            return self.model.predict(X, verbose=verbose)
+        except Exception as e:
+            logger.error(f"Error during prediction: {e}")
+            logger.error(f"Input shape: {X.shape}, expected shape: {self.input_shape}")
+            # Return zeros as fallback
+            return np.zeros((X.shape[0], self.output_dim))
     
     def evaluate(self, X: np.ndarray, y: np.ndarray) -> Dict[str, float]:
         """

@@ -4,7 +4,7 @@ Generates technical indicators and advanced features.
 """
 import logging
 from typing import Dict, List, Optional, Tuple, Union, Callable
-
+from feature_consistency import ensure_feature_consistency, ensure_sequence_dimensions
 import numpy as np
 import pandas as pd
 import ta

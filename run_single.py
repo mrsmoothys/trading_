@@ -16,10 +16,7 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import tensorflow as tf
-import feature_consistency
-from feature_consistency import ensure_feature_consistency
-from feature_consistency import ensure_sequence_dimensions
-
+from feature_consistency import ensure_feature_consistency, ensure_sequence_dimensions
 
 # Add parent directory to path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -84,8 +81,10 @@ def parse_args():
                         help='Trading fee (default: from config)')
     parser.add_argument('--slippage', type=float, default=SLIPPAGE,
                         help='Slippage (default: from config)')
-    parser.add_argument('--threshold', type=float, default=0.005,
-                        help='Signal threshold (default: 0.005)')
+    parser.add_argument('--threshold', type=float, default=0.001,
+                        help='Signal threshold (default: 0.001)')
+    parser.add_argument('--auto-calibrate', action='store_true',
+                        help='Auto-calibrate signal threshold based on predictions')
     
     # Optimization
     parser.add_argument('--optimize-model', action='store_true',
@@ -127,6 +126,11 @@ def parse_args():
                         help='Perform cross-validation')
     parser.add_argument('--cv-folds', type=int, default=5,
                         help='Number of cross-validation folds (default: 5)')
+    
+    parser.add_argument('--multi-timeframe', action='store_true',
+                   help='Use multi-timeframe signal confirmation')
+    parser.add_argument('--tf-weight', type=float, default=0.5,
+                   help='Weight for higher timeframe signals (default: 0.5)')
     
     return parser.parse_args()
 
@@ -583,6 +587,117 @@ def prepare_data_for_prediction(data, feature_columns, max_features=36):
     # Return data with only the selected columns
     return data[selected_columns]
 
+# In run_single.py - Consistent feature processing
+
+def prepare_and_process_features(data, n_components=30, force_pca=True):
+    """
+    Consistent feature preparation and processing function.
+    
+    Args:
+        data: Input DataFrame with OHLCV data
+        n_components: Number of PCA components to use
+        force_pca: Whether to force PCA even if errors occur
+        
+    Returns:
+        Tuple of (processed_data, pca_model, scaler_model, feature_columns)
+    """
+    # Get a logger for this function
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    logger.info("Preparing features with consistent processing")
+    
+    # Initialize these variables at the top of the function
+    pca_model = None
+    scaler_model = None
+    
+    # Step 1: Ensure all columns are numeric
+    ohlcv_cols = ['open', 'high', 'low', 'close', 'volume']
+    for col in data.columns:
+        if col not in ohlcv_cols:
+            try:
+                if data[col].dtype == object or pd.api.types.is_string_dtype(data[col]):
+                    logger.warning(f"Converting string column to numeric: {col}")
+                    data[col] = pd.to_numeric(data[col], errors='coerce')
+            except Exception as e:
+                logger.warning(f"Dropping problematic column {col}: {e}")
+                data = data.drop(col, axis=1)
+    
+    # Step 2: Apply PCA reduction
+    feature_columns = []
+    processed_data = data.copy()
+    
+    try:
+        # Generate basic features first if needed
+        feature_engineer = FeatureEngineer(data)
+        processed_data = feature_engineer.generate_all_features()
+        
+        # Apply PCA
+        logger.info(f"Applying PCA with {n_components} components")
+        processed_data, pca_model, scaler_model = apply_pca_reduction(processed_data, n_components=n_components)
+        
+        # Ensure we have exactly n_components
+        processed_data = ensure_feature_consistency(processed_data, required_feature_count=n_components)
+        feature_columns = [col for col in processed_data.columns if col.startswith('pc_')]
+        logger.info(f"Successfully created {len(feature_columns)} PCA components")
+        
+    except Exception as e:
+        logger.error(f"Error in feature processing: {e}")
+        if force_pca:
+            logger.info("Creating synthetic PCA components as fallback")
+            
+            # Create OHLCV dataframe
+            ohlcv_data = data[ohlcv_cols].copy()
+            
+            # Create synthetic PCA components using price-based calculations
+            for i in range(1, n_components + 1):
+                component_name = f'pc_{i}'
+                
+                # Use different price transformations for different components
+                if i % 5 == 0:
+                    ohlcv_data[component_name] = data['close'].pct_change(i).fillna(0)
+                elif i % 5 == 1:
+                    ohlcv_data[component_name] = data['high'].pct_change(i).fillna(0)
+                elif i % 5 == 2:
+                    ohlcv_data[component_name] = data['low'].pct_change(i).fillna(0)
+                elif i % 5 == 3:
+                    ohlcv_data[component_name] = (data['high'] - data['low']) / data['close']
+                else:
+                    ohlcv_data[component_name] = (data['close'] - data['open']) / data['open']
+                
+                # Add some noise for diversity
+                ohlcv_data[component_name] = ohlcv_data[component_name] + np.random.normal(0, 0.0001, len(data))
+            
+            processed_data = ohlcv_data
+            feature_columns = [f'pc_{i}' for i in range(1, n_components + 1)]
+            logger.info(f"Created {len(feature_columns)} synthetic PCA components")
+        else:
+            # Fall back to non-PCA features
+            logger.info("Falling back to standard features without PCA")
+            processed_data = generate_features(data, apply_pca=False)
+            processed_data = ensure_feature_consistency(processed_data, required_feature_count=n_components)
+            feature_columns = [col for col in processed_data.columns if col not in ohlcv_cols]
+            logger.info(f"Using {len(feature_columns)} standard features")
+    
+    # Save models for consistent reuse
+    if pca_model is not None and scaler_model is not None:
+        import pickle
+        os.makedirs(os.path.join(MODELS_DIR, 'preprocessing'), exist_ok=True)
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        pca_path = os.path.join(MODELS_DIR, 'preprocessing', f"pca_{timestamp}.pkl")
+        scaler_path = os.path.join(MODELS_DIR, 'preprocessing', f"scaler_{timestamp}.pkl")
+        
+        with open(pca_path, 'wb') as f:
+            pickle.dump(pca_model, f)
+        
+        with open(scaler_path, 'wb') as f:
+            pickle.dump(scaler_model, f)
+        
+        logger.info(f"Feature processing models saved: {pca_path}, {scaler_path}")
+    
+    return processed_data, pca_model, scaler_model, feature_columns
+
+
 def main():
     """Main function."""
     # Parse arguments
@@ -648,7 +763,7 @@ def main():
 
         # Apply PCA with consistent feature count
         try:
-            data, pca_model, scaler_model = apply_pca_reduction(data, n_components=n_components)
+            data, pca_model, scaler_model, feature_columns = prepare_and_process_features(data, n_components=30)
             
             # Ensure exactly 30 PCA components
             data = ensure_feature_consistency(data, required_feature_count=30)
@@ -937,7 +1052,9 @@ def main():
             trading_fee=args.fee,
             slippage=args.slippage,
             adaptive_sl_tp=True,
-            trailing_stop=True
+            trailing_stop=True,
+            use_multi_timeframe=args.multi_timeframe,  # Add this line
+            multi_tf_weight=args.tf_weight    
         )
         
         

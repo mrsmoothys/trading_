@@ -5,6 +5,8 @@ import logging
 from datetime import datetime
 from enum import Enum
 from typing import Dict, List, Optional, Tuple, Union, Any
+from multi_timeframe_utils import create_multi_timeframe_data, align_timeframes_to_base
+
 
 import numpy as np
 import pandas as pd
@@ -813,6 +815,8 @@ class MLTradingStrategy(TradingStrategy):
         lookback_window: int,
         prediction_horizon: int,
         threshold: float = 0.005,
+        use_multi_timeframe: bool = True,  # New parameter
+        multi_tf_weight: float = 0.5,      # New parameter
         **kwargs
     ):
         """
@@ -825,6 +829,8 @@ class MLTradingStrategy(TradingStrategy):
             lookback_window: Number of candles to consider for prediction
             prediction_horizon: Number of future candles to predict
             threshold: Price movement threshold for signals
+            use_multi_timeframe: Whether to use multi-timeframe confirmation
+            multi_tf_weight: Weight for multi-timeframe signals (0-1)
             **kwargs: Additional arguments for TradingStrategy
         """
         super().__init__(symbol, timeframe, **kwargs)
@@ -833,26 +839,28 @@ class MLTradingStrategy(TradingStrategy):
         self.lookback_window = lookback_window
         self.prediction_horizon = prediction_horizon
         self.threshold = threshold
+        self.use_multi_timeframe = use_multi_timeframe
+        self.multi_tf_weight = multi_tf_weight
+        
+        # Storage for multi-timeframe data
+        self.multi_tf_data = {}
+        self.multi_tf_signals = {}
 
     def set_data(self, data: pd.DataFrame, **kwargs) -> None:
         """
-        Set the market data for the strategy with optional PCA transformation.
-        
-        Args:
-            data: Market data as pandas DataFrame
-            **kwargs: Additional keyword arguments including:
-                - pca_model: Optional PCA model for transformation
-                - scaler_model: Optional scaler model for standardization
+        Set the market data with multi-timeframe support.
         """
-        # Call the parent implementation first
-        super().set_data(data)
+        # Call parent implementation
+        super().set_data(data, **kwargs)
         
-        # Apply PCA transformation if models are provided
-        pca_model = kwargs.get('pca_model')
-        scaler_model = kwargs.get('scaler_model')
-        
-        if pca_model is not None and scaler_model is not None:
-            self._transform_features_with_pca(pca_model, scaler_model)
+        # Create multi-timeframe data if enabled
+        if self.use_multi_timeframe:
+            try:
+                self.multi_tf_data = create_multi_timeframe_data(data, self.timeframe)
+                logger.info(f"Created multi-timeframe data for {len(self.multi_tf_data)} timeframes")
+            except Exception as e:
+                logger.error(f"Error creating multi-timeframe data: {e}")
+                self.multi_tf_data = {self.timeframe: data}
 
     def _transform_features_with_pca(self, pca_model, scaler_model):
         """
@@ -909,12 +917,69 @@ class MLTradingStrategy(TradingStrategy):
             # Continue with original data if transformation fails
     
     def generate_signals(self) -> pd.DataFrame:
-        """Generate trading signals with enhanced logic that works with or without PCA."""
-        if self.data is None:
+        """
+        Generate trading signals with multi-timeframe confirmation.
+        """
+        # Generate signals for each timeframe
+        if self.use_multi_timeframe and len(self.multi_tf_data) > 1:
+            logger.info("Generating signals with multi-timeframe confirmation")
+            
+            # Process each timeframe
+            all_tf_signals = {}
+            for tf, tf_data in self.multi_tf_data.items():
+                # Generate signals for this timeframe
+                signals_tf = self._generate_signals_for_timeframe(tf_data)
+                all_tf_signals[tf] = signals_tf
+            
+            # Align all signals to base timeframe
+            aligned_signals = align_timeframes_to_base(all_tf_signals, self.timeframe)
+            
+            # Combine signals with weighted approach
+            base_signals = all_tf_signals[self.timeframe]
+            
+            # Add columns for each timeframe's signals
+            for tf, signals_series in aligned_signals.items():
+                if tf != self.timeframe:
+                    base_signals[f'signal_{tf}'] = signals_series
+            
+            # Create weighted signal using all timeframes
+            base_weight = 1.0 - self.multi_tf_weight
+            higher_weights = self.multi_tf_weight / (len(aligned_signals) - 1) if len(aligned_signals) > 1 else 0
+            
+            # Calculate combined signal
+            base_signals['combined_signal'] = base_signals['signal'] * base_weight
+            
+            for tf, signals_series in aligned_signals.items():
+                if tf != self.timeframe:
+                    base_signals['combined_signal'] += signals_series * higher_weights
+            
+            # Discretize combined signal
+            base_signals['signal'] = np.where(
+                base_signals['combined_signal'] >= 0.5, 1,
+                np.where(base_signals['combined_signal'] <= -0.5, -1, 0)
+            )
+            
+            return base_signals
+        
+        else:
+            # Fall back to single timeframe
+            return self._generate_signals_for_timeframe(self.data)
+    
+    def _generate_signals_for_timeframe(self, data: pd.DataFrame) -> pd.DataFrame:
+        """
+        Generate signals for a specific timeframe.
+        
+        Args:
+            data: DataFrame with OHLCV data for the timeframe
+            
+        Returns:
+            DataFrame with signals
+        """
+        if data is None:
             raise ValueError("Data not set. Call set_data() first.")
         
         # Add signal column
-        signals = self.data.copy()
+        signals = data.copy()
         signals['signal'] = 0
         
         # Check if we're using PCA components or raw features
@@ -943,110 +1008,75 @@ class MLTradingStrategy(TradingStrategy):
                 X = np.expand_dims(window_data_norm, axis=0)
                 
                 # Get prediction
-                pred = self.model.predict(X)[0]
+                pred = self.model.predict(X, verbose=0)[0]
                 
                 # Calculate predicted return
                 current_price = signals['close'].iloc[i]
                 predicted_price = pred[-1]  # Last value in prediction horizon
                 predicted_return = (predicted_price / current_price) - 1
                 
-                # Base signal from model prediction
-                if predicted_return > self.threshold:
+                # Base signal from model prediction with market context enhancement
+                predicted_return_adj = predicted_return  # Start with model prediction
+
+                # Add market context enhancement even when using PCA
+                # 1. Simple trend following component
+                price_sma20 = signals['close'].rolling(20).mean()
+                price_sma50 = signals['close'].rolling(50).mean()
+
+                if i >= 50:  # We need enough data for the SMAs
+                    # Get current price and SMAs
+                    curr_price = signals['close'].iloc[i]
+                    curr_sma20 = price_sma20.iloc[i]
+                    curr_sma50 = price_sma50.iloc[i]
+                    
+                    # Calculate trend bias factor (0.2 = moderate enhancement)
+                    trend_bias = 0.2
+                    
+                    # Price above both MAs - enhance bullish predictions
+                    if curr_price > curr_sma20 and curr_price > curr_sma50:
+                        predicted_return_adj += trend_bias * abs(predicted_return)
+                        
+                    # Price below both MAs - enhance bearish predictions
+                    elif curr_price < curr_sma20 and curr_price < curr_sma50:
+                        predicted_return_adj -= trend_bias * abs(predicted_return)
+                        
+                    # MAs crossing - stronger signal
+                    if (curr_sma20 > curr_sma50 and price_sma20.iloc[i-1] <= price_sma50.iloc[i-1]):
+                        # Bullish crossover
+                        predicted_return_adj += trend_bias * 2
+                    elif (curr_sma20 < curr_sma50 and price_sma20.iloc[i-1] >= price_sma50.iloc[i-1]):
+                        # Bearish crossover
+                        predicted_return_adj -= trend_bias * 2
+
+                # 2. Volatility context
+                if 'atr' in signals.columns:
+                    # Get ATR and normalize by price
+                    atr_pct = signals['atr'].iloc[i] / signals['close'].iloc[i]
+                    
+                    # If in high volatility period, amplify signals
+                    rolling_atr = signals['atr'].rolling(20).mean()
+                    if i >= 20 and signals['atr'].iloc[i] > rolling_atr.iloc[i] * 1.5:
+                        volatility_factor = 1.5  # Amplify during high volatility
+                        predicted_return_adj *= volatility_factor
+
+                # Use adjusted predicted return for signal generation
+                if predicted_return_adj > self.threshold:
                     base_signal = 1
-                elif predicted_return < -self.threshold:
+                elif predicted_return_adj < -self.threshold:
                     base_signal = -1
                 else:
                     base_signal = 0
                 
-                # If using PCA, we can't enhance with specific features
-                if using_pca:
-                    signals.loc[signals.index[i], 'signal'] = base_signal
-                    continue
+                # Store signals
+                signals.loc[signals.index[i], 'signal'] = base_signal
                 
-                # Otherwise, enhance signal with pattern recognition
-                signal_strength = base_signal
-                
-                # Only apply enhancements if we have the necessary features
-                # Check for candlestick pattern features
-                if 'bullish_engulfing' in signals.columns and base_signal > 0:
-                    if signals['bullish_engulfing'].iloc[i] > 0 or signals['hammer'].iloc[i] > 0:
-                        signal_strength += 0.25
-                
-                if 'bearish_engulfing' in signals.columns and base_signal < 0:
-                    if signals['bearish_engulfing'].iloc[i] > 0 or signals['shooting_star'].iloc[i] > 0:
-                        signal_strength -= 0.25
-                
-                # Check for market structure features
-                if 'at_support' in signals.columns and base_signal > 0:
-                    if signals['at_support'].iloc[i] > 0:
-                        signal_strength += 0.25
-                
-                if 'at_resistance' in signals.columns and base_signal < 0:
-                    if signals['at_resistance'].iloc[i] > 0:
-                        signal_strength -= 0.25
-                
-                # Check for trend features
-                if 'strong_uptrend' in signals.columns:
-                    if signals['strong_uptrend'].iloc[i] > 0 and base_signal < 0:
-                        signal_strength += 0.5  # Reduce strength of bearish signal in strong uptrend
-                    elif signals['strong_downtrend'].iloc[i] > 0 and base_signal > 0:
-                        signal_strength -= 0.5  # Reduce strength of bullish signal in strong downtrend
-                
-                # Check for volatility features
-                if 'volatility_regime' in signals.columns:
-                    vol_regime = signals['volatility_regime'].iloc[i]
-                    if vol_regime > 0:  # High volatility - amplify signal
-                        signal_strength *= 1.2
-                    elif vol_regime < 0:  # Low volatility - reduce signal
-                        signal_strength *= 0.8
-                
-                # Convert signal strength to discrete signal
-                if signal_strength >= 0.75:
-                    signals.loc[signals.index[i], 'signal'] = 1
-                elif signal_strength <= -0.75:
-                    signals.loc[signals.index[i], 'signal'] = -1
-                else:
-                    signals.loc[signals.index[i], 'signal'] = 0
-                    
             except Exception as e:
                 logger.error(f"Error generating signal at index {i}: {e}")
                 # Continue to next candle
         
         return signals
-        
-        # Generate predictions for each candle
-        for i in range(self.lookback_window, len(signals)):
-            try:
-                # Get lookback window for features
-                window_data = signals[feature_columns].iloc[i-self.lookback_window:i].values
-                
-                # Normalize data
-                mean = np.mean(window_data, axis=0)
-                std = np.std(window_data, axis=0)
-                std = np.where(std == 0, 1e-8, std)  # Avoid division by zero
-                window_data_norm = (window_data - mean) / std
-                
-                # Reshape for model input (add batch dimension)
-                X = np.expand_dims(window_data_norm, axis=0)
-                
-                # Get prediction
-                pred = self.model.predict(X)[0]
-                
-                # Calculate predicted return
-                current_price = signals['close'].iloc[i]
-                predicted_price = pred[-1]  # Last value in prediction horizon
-                predicted_return = (predicted_price / current_price) - 1
-                
-                # Generate signal based on predicted return
-                if predicted_return > self.threshold:
-                    signals.loc[signals.index[i], 'signal'] = 1
-                elif predicted_return < -self.threshold:
-                    signals.loc[signals.index[i], 'signal'] = -1
-            except Exception as e:
-                logger.error(f"Error generating signal at index {i}: {e}")
-                # Continue to next candle
-        
-        return signals
+
+
 
 class EnsembleTradingStrategy(TradingStrategy):
     """
@@ -1112,6 +1142,9 @@ class EnsembleTradingStrategy(TradingStrategy):
         self.current_index = 0
         self.current_timestamp = self.data.index[0]
         self.current_price = self.data['close'].iloc[0]
+
+
+        
 
     def _transform_features_with_pca(self, pca_model, scaler_model):
         """
@@ -1181,6 +1214,49 @@ class EnsembleTradingStrategy(TradingStrategy):
         )
         
         return signals
+    
+    # Add this method to the EnsembleTradingStrategy class
+    def set_data(self, data: pd.DataFrame, pca_model=None, scaler_model=None) -> None:
+        """
+        Set the market data for the strategy.
+        
+        Args:
+            data: Market data as pandas DataFrame
+            pca_model: Optional PCA model for feature transformation
+            scaler_model: Optional scaler model for feature standardization
+        """
+        # Store original data
+        self.data = data.copy()
+        
+        # Transform features with PCA if models are provided
+        if pca_model is not None and scaler_model is not None:
+            try:
+                self._transform_features_with_pca(pca_model, scaler_model)
+            except Exception as e:
+                logger.error(f"Error transforming features with PCA: {e}")
+                # Continue with original data if transformation fails
+        
+        # Reset position and performance tracking
+        self.position = Position.FLAT
+        self.current_order = None
+        self.orders = []
+        self.trades = []
+        self.equity_curve = [self.initial_capital]
+        self.drawdowns = [0.0]
+        self.returns = [0.0]
+        
+        # Set initial market state
+        self.current_index = 0
+        self.current_timestamp = self.data.index[0]
+        self.current_price = self.data['close'].iloc[0]
+        
+        # Set data for each strategy in the ensemble
+        for strategy in self.strategies:
+            try:
+                strategy.set_data(self.data)
+            except Exception as e:
+                logger.error(f"Error setting data for strategy {type(strategy).__name__}: {e}")
+    
 
 if __name__ == "__main__":
     # Test the strategy
