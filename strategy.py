@@ -235,7 +235,8 @@ class TradingStrategy:
         trading_fee: float = TRADING_FEE,
         slippage: float = SLIPPAGE,
         adaptive_sl_tp: bool = ADAPTIVE_SL_TP,
-        trailing_stop: bool = TRAILING_STOP
+        trailing_stop: bool = TRAILING_STOP,
+        expected_feature_count : int = 30,
     ):
         """
         Initialize the trading strategy.
@@ -276,6 +277,9 @@ class TradingStrategy:
         self.current_index = None
         self.current_timestamp = None
         self.current_price = None
+
+        self.expected_feature_count = expected_feature_count # new
+
     
     def set_data(self, data: pd.DataFrame, **kwargs) -> None:
         """
@@ -617,6 +621,10 @@ class TradingStrategy:
         if self.data is None:
             raise ValueError("Data not set. Call set_data() first.")
         
+        # Add feature consistency check
+        from feature_consistency import ensure_feature_consistency
+        self.data = ensure_feature_consistency(self.data, required_feature_count=self.expected_feature_count)
+
         # Add signal column
         signals = self.data.copy()
         signals['signal'] = 0

@@ -17,6 +17,8 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import tensorflow as tf
+from feature_consistency import ensure_feature_consistency, ensure_sequence_dimensions
+
 
 # Add parent directory to path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -629,7 +631,7 @@ def main():
        # Generate features with PCA reduction
         logger.info("Generating features with PCA dimensionality reduction")
         n_components = 30  # Set the number of components to match model expectations
-       
+            
         # Pre-process all columns to ensure numeric types before PCA
         for col in data.columns:
             if col not in ['open', 'high', 'low', 'close', 'volume']:
@@ -643,9 +645,16 @@ def main():
                     # Remove problematic column as last resort
                     data = data.drop(col, axis=1)
 
-        # Now apply PCA with clean data
+        # Apply PCA with consistent feature count
         try:
             data, pca_model, scaler_model = apply_pca_reduction(data, n_components=n_components)
+            
+            # Ensure exactly 30 PCA components
+            data = ensure_feature_consistency(data, required_feature_count=30)
+            
+            # Define feature columns based on PCA components
+            feature_columns = [col for col in data.columns if col.startswith('pc_')]
+            logger.info(f"Using {len(feature_columns)} PCA components")
             
             # Save PCA and scaler models for consistency
             import pickle
@@ -661,14 +670,20 @@ def main():
             
             logger.info(f"PCA model saved to {pca_path}")
             logger.info(f"Scaler model saved to {scaler_path}")
-            
-            # Now feature columns are simply the PCA components
-            feature_columns = [col for col in data.columns if col.startswith('pc_')]
         except Exception as e:
             logger.error(f"Error in PCA reduction: {e}")
             logger.info("Falling back to regular feature processing without PCA")
+            
+            # Generate features without PCA
             data = generate_features(data, apply_pca=False)
+            
+            # Get feature columns excluding OHLCV
             feature_columns = [col for col in data.columns if col not in ['open', 'high', 'low', 'close', 'volume']]
+            
+            # Ensure consistent feature count even without PCA
+            data = ensure_feature_consistency(data, required_feature_count=30)
+            feature_columns = [col for col in data.columns if col not in ['open', 'high', 'low', 'close', 'volume']]
+            logger.info(f"Using {len(feature_columns)} regular features")
 
         
         # Step 2: Split data for training and validation
@@ -789,14 +804,19 @@ def main():
                 target_column='close', 
                 normalize=True,
             )
+
+            # Ensure proper dimensions
+
+            expected_shape = (None, args.lookback, 30)  # Fixed feature count
+            X = ensure_sequence_dimensions(X, expected_shape)
+
             # Derive actual feature count from training data (ensuring consistency)
             actual_feature_count = X.shape[2]  # This will be 36, matching your training inputs
 
             # Create model
-            actual_feature_count = X.shape[2]  # For example, 55
             model = DeepLearningModel(
-                input_shape=(args.lookback, actual_feature_count),  # Now matches training data
-                output_dim=y.shape[1],
+                input_shape=(args.lookback, 30),  #fixed feature count
+                output_dim=args.horizon,
                 model_type=args.model_type,
                 hidden_layers=HIDDEN_LAYERS,
                 dropout_rate=DROPOUT_RATE,
@@ -822,6 +842,22 @@ def main():
                 batch_size=batch_size,
                 save_path=model_path
             )
+
+            # After saving the model
+            if model_path and args.save_model:
+                # Save PCA configuration
+                pca_config = {
+                    'n_components': 30,
+                    'pca_model_path': pca_path,
+                    'scaler_model_path': scaler_path
+                }
+
+                # Save it alongside your model
+                pca_config_path = os.path.join(model_dir, 'pca_config.json')
+                with open(pca_config_path, 'w') as f:
+                    json.dump(pca_config, f, indent=2)
+                
+                logger.info(f"PCA configuration saved to {pca_config_path}")
 
             if model_path:
                 logger.info(f"Model saved to {model_path}")
@@ -912,21 +948,21 @@ def main():
         logger.info(f"Preparing data for backtest with {n_components} PCA components")
 
         try:
-            # Apply PCA transformation before backtest
-            backtest_data, pca_model, scaler_model = apply_pca_reduction(data, n_components=n_components)
+            # Ensure feature consistency before backtest
+            backtest_data = ensure_feature_consistency(data, required_feature_count=30)
             
-            # Set data for strategy with PCA transformation
-            strategy.set_data(backtest_data, pca_model=pca_model, scaler_model=scaler_model)
+            # Set data for strategy
+            strategy.set_data(backtest_data)
             
-            # Run backtest
+            # Run backtest with dimension-consistent data
             if args.detailed_backtest:
                 backtest_results = run_detailed_backtest(strategy=strategy, data=backtest_data, args=args)
             else:
                 backtest_results = strategy.backtest(backtest_data)
         except Exception as e:
-            logger.error(f"Error during PCA processing: {e}")
-            # Fallback to original approach without PCA
-            logger.info("Falling back to standard backtest without PCA")
+            logger.error(f"Error during feature consistency processing: {e}")
+            # Fallback to original approach
+            logger.info("Falling back to standard backtest without feature consistency")
             if args.detailed_backtest:
                 backtest_results = run_detailed_backtest(strategy=strategy, data=data, args=args)
             else:

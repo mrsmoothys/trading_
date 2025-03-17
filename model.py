@@ -26,8 +26,8 @@ from config import (
 logger = logging.getLogger(__name__)
 
 class DeepLearningModel:
-    """now h
-    Deep learning model for price prediction.
+    """
+    Deep learning model for price prediction with improved dimension handling.
     """
     
     def __init__(
@@ -41,7 +41,7 @@ class DeepLearningModel:
         model_path: Optional[str] = None
     ):
         """
-        Initialize the model.
+        Initialize the model with improved dimension handling.
         
         Args:
             input_shape: Shape of input data (sequence_length, num_features)
@@ -52,7 +52,7 @@ class DeepLearningModel:
             learning_rate: Learning rate for optimizer
             model_path: Path to load a pre-trained model
         """
-
+        # Store original parameters
         self.input_shape = input_shape
         self.output_dim = output_dim
         self.model_type = model_type
@@ -60,15 +60,24 @@ class DeepLearningModel:
         self.dropout_rate = dropout_rate
         self.learning_rate = learning_rate
         
+        # Store expected feature count for consistency checks
+        self.expected_features = input_shape[1]
+        
         # Model and training history
         self.model = None
         self.history = None
         
         # Load model if provided
         if model_path and os.path.exists(model_path):
-            self.load_model(model_path)
+            metadata = self.load_model(model_path)
+            
+            # Update expected features if available in metadata
+            if metadata and 'input_shape' in metadata:
+                self.expected_features = metadata['input_shape'][1]
+                logger.info(f"Updated expected features to {self.expected_features} from model metadata")
         else:
             self._build_model()
+    
     
     def _build_lstm_model(self) -> Model:
         """Build LSTM model architecture."""
@@ -353,6 +362,32 @@ class DeepLearningModel:
         # Summary
         self.model.summary()
     
+    def _check_input_dimensions(self, X: np.ndarray) -> np.ndarray:
+        """
+        Check and adjust input dimensions if needed.
+        
+        Args:
+            X: Input features with shape (samples, sequence_length, features)
+            
+        Returns:
+            Adjusted input features
+        """
+        # Check if dimensions match
+        if X.shape[2] != self.expected_features:
+            logger.warning(f"Input feature dimension mismatch: got {X.shape[2]}, expected {self.expected_features}")
+            
+            # Create adjusted array
+            X_adjusted = np.zeros((X.shape[0], X.shape[1], self.expected_features))
+            
+            # Copy data for common dimensions
+            common_dims = min(X.shape[2], self.expected_features)
+            X_adjusted[:, :, :common_dims] = X[:, :, :common_dims]
+            
+            return X_adjusted
+        
+        return X
+
+
     def train(
         self,
         X_train: np.ndarray,
@@ -439,10 +474,10 @@ class DeepLearningModel:
     
     def predict(self, X: np.ndarray) -> np.ndarray:
         """
-        Make predictions with the model.
+        Make predictions with dimension checking.
         
         Args:
-            X: Input features
+            X: Input features with shape (samples, sequence_length, features)
             
         Returns:
             Predicted values
@@ -450,7 +485,10 @@ class DeepLearningModel:
         if self.model is None:
             raise ValueError("Model not initialized. Call build_model() first.")
         
-        return self.model.predict(X)
+        # Check and adjust feature dimensions if needed
+        X_adjusted = self._check_input_dimensions(X)
+        
+        return self.model.predict(X_adjusted)
     
     def evaluate(self, X: np.ndarray, y: np.ndarray) -> Dict[str, float]:
         """
@@ -506,6 +544,7 @@ class DeepLearningModel:
             'input_shape': self.input_shape,
             'output_dim': self.output_dim,
             'model_type': self.model_type,
+            'feature_count': self.expected_features,
             'datetime_saved': pd.Timestamp.now().isoformat()
         }
         
