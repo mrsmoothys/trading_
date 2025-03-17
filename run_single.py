@@ -12,12 +12,13 @@ from datetime import datetime
 from typing import Dict, List, Optional, Tuple, Union, Any
 from feature_engineering import apply_pca_reduction
 
-
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import tensorflow as tf
-from feature_consistency import ensure_feature_consistency, ensure_sequence_dimensions
+import feature_consistency
+from feature_consistency import ensure_feature_consistency
+from feature_consistency import ensure_sequence_dimensions
 
 
 # Add parent directory to path
