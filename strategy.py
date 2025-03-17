@@ -1114,20 +1114,17 @@ class EnsembleTradingStrategy(TradingStrategy):
             # Equal weights by default
             self.weights = [1.0 / len(strategies)] * len(strategies)
     
-        def set_data(self, data: pd.DataFrame, pca_model=None, scaler_model=None) -> None:
-            """
-            Set the market data for the strategy.
-            
-            Args:
-                data: Market data as pandas DataFrame
-                pca_model: Optional PCA model for feature transformation
-                scaler_model: Optional scaler model for feature standardization
-            """
-        self.data = data.copy()
+    def set_data(self, data: pd.DataFrame, pca_model=None, scaler_model=None) -> None:
+        """
+        Set the market data for the strategy.
         
-        # Transform features with PCA if models are provided
-        if pca_model is not None and scaler_model is not None:
-            self._transform_features_with_pca(pca_model, scaler_model)
+        Args:
+            data: Market data as pandas DataFrame
+            pca_model: Optional PCA model for feature transformation
+            scaler_model: Optional scaler model for feature standardization
+        """
+        # Store original data
+        self.data = data.copy()
         
         # Reset position and performance tracking
         self.position = Position.FLAT
@@ -1142,8 +1139,13 @@ class EnsembleTradingStrategy(TradingStrategy):
         self.current_index = 0
         self.current_timestamp = self.data.index[0]
         self.current_price = self.data['close'].iloc[0]
-
-
+        
+        # Set data for each strategy in the ensemble
+        for strategy in self.strategies:
+            try:
+                strategy.set_data(self.data)
+            except Exception as e:
+                logger.error(f"Error setting data for strategy {type(strategy).__name__}: {e}")
         
 
     def _transform_features_with_pca(self, pca_model, scaler_model):
@@ -1164,6 +1166,10 @@ class EnsembleTradingStrategy(TradingStrategy):
             return  # No features to transform
         
         features = self.data[feature_cols]
+        
+        # Handle extreme values
+        features.replace([np.inf, -np.inf], np.nan, inplace=True)
+        features.fillna(features.mean(), inplace=True)
         
         # Standardize features
         features_scaled = scaler_model.transform(features)
