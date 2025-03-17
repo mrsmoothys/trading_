@@ -237,13 +237,13 @@ def perform_strategy_optimization(
     return best_params
 
 def analyze_feature_importance(
-    model,
-    data_path: str,
-    args: argparse.Namespace,
-    X: np.ndarray,
-    y: np.ndarray,
-    feature_columns: List[str]
-) -> pd.DataFrame:
+        model,
+        data_path: str,
+        args: argparse.Namespace,
+        X: np.ndarray,
+        y: np.ndarray,
+        feature_columns: List[str]
+    ) -> pd.DataFrame:
     """
     Analyze feature importance.
     
@@ -261,23 +261,47 @@ def analyze_feature_importance(
     logger = logging.getLogger(__name__)
     logger.info("Starting feature importance analysis")
     
-    # Create analyzer
-    analyzer = FeatureImportanceAnalyzer(
-        model=model,
-        data_path=data_path,
-        result_dir=os.path.join(args.results_dir, 'feature_importance')
-    )
+    # Create directory for feature importance results if it doesn't exist
+    result_dir = os.path.join(args.results_dir, 'feature_importance')
+    os.makedirs(result_dir, exist_ok=True)
     
-    # Set data directly to avoid reloading
-    analyzer.X = X
-    analyzer.y = y
-    analyzer.feature_columns = feature_columns
-    
-    # Run analysis
-    results = analyzer.analyze()
-    
-    logger.info("Feature importance analysis completed")
-    return results['importance']
+    try:
+        # Create analyzer
+        analyzer = FeatureImportanceAnalyzer(
+            model=model,
+            data_path=data_path,
+            result_dir=result_dir
+        )
+        
+        # Filter for PCA components if present
+        pca_feature_columns = [col for col in feature_columns if col.startswith('pc_')]
+        if pca_feature_columns:
+            logger.info(f"Using {len(pca_feature_columns)} PCA components for feature importance analysis")
+            feature_columns = pca_feature_columns
+        
+        # Create train/val/test split
+        X_train, X_val, X_test, y_train, y_val, y_test = train_val_test_split(X, y)
+        
+        # Set data attributes
+        analyzer.X = X
+        analyzer.y = y
+        analyzer.X_train = X_train
+        analyzer.X_val = X_val
+        analyzer.X_test = X_test
+        analyzer.y_train = y_train
+        analyzer.y_val = y_val
+        analyzer.y_test = y_test
+        analyzer.feature_columns = feature_columns
+        
+        # Run analysis
+        results = analyzer.analyze()
+        
+        logger.info("Feature importance analysis completed")
+        return results['importance']
+    except Exception as e:
+        logger.error(f"Error in feature importance analysis: {str(e)}")
+        # Return empty DataFrame with expected columns
+        return pd.DataFrame(columns=['feature', 'importance', 'std'])
 
 def perform_cross_validation(
     model_type: str,
@@ -621,18 +645,30 @@ def main():
 
         # Now apply PCA with clean data
         try:
-            data, pca_model, scaler_model = generate_features(data, apply_pca=True, n_components=n_components)
-            # Now feature columns are simply the PCA components plus OHLCV
+            data, pca_model, scaler_model = apply_pca_reduction(data, n_components=n_components)
+            
+            # Save PCA and scaler models for consistency
+            import pickle
+            os.makedirs(os.path.join(MODELS_DIR, 'preprocessing'), exist_ok=True)
+            pca_path = os.path.join(MODELS_DIR, 'preprocessing', f"pca_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pkl")
+            scaler_path = os.path.join(MODELS_DIR, 'preprocessing', f"scaler_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pkl")
+            
+            with open(pca_path, 'wb') as f:
+                pickle.dump(pca_model, f)
+            
+            with open(scaler_path, 'wb') as f:
+                pickle.dump(scaler_model, f)
+            
+            logger.info(f"PCA model saved to {pca_path}")
+            logger.info(f"Scaler model saved to {scaler_path}")
+            
+            # Now feature columns are simply the PCA components
             feature_columns = [col for col in data.columns if col.startswith('pc_')]
         except Exception as e:
             logger.error(f"Error in PCA reduction: {e}")
             logger.info("Falling back to regular feature processing without PCA")
             data = generate_features(data, apply_pca=False)
             feature_columns = [col for col in data.columns if col not in ['open', 'high', 'low', 'close', 'volume']]
-
-
-        # Now feature columns are simply the PCA components plus OHLCV
-        feature_columns = [col for col in data.columns if col.startswith('pc_')]
 
         
         # Step 2: Split data for training and validation

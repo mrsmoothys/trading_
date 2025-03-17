@@ -66,30 +66,59 @@ class ModelOptimizer:
     
     def prepare_data(self) -> None:
         """
-        Load and prepare data for optimization.
+        Load and prepare data for analysis.
         """
-        # Load data
-        self.data = load_data(self.data_path)
+        # Skip data loading if X, y and feature_columns are already set
+        if (self.X is not None and self.y is not None and self.feature_columns is not None and
+            hasattr(self, 'X_test') and self.X_test is not None):
+            logger.info("Using pre-set data for feature importance analysis")
+            return
         
-        # Generate features
-        self.data = generate_features(self.data)
-        
-        # Select feature columns (exclude NaN columns)
-        self.feature_columns = [col for col in self.data.columns if col not in ['open', 'high', 'low', 'close', 'volume']]
-        non_nan_cols = self.data[self.feature_columns].columns[~self.data[self.feature_columns].isna().any()]
-        self.feature_columns = list(non_nan_cols)
-        
-        # Create sequences
-        self.X, self.y = create_training_sequences(
-            self.data,
-            lookback_window=LOOKBACK_WINDOW,
-            prediction_horizon=PREDICTION_HORIZON,
-            feature_columns=self.feature_columns,
-            target_column='close',
-            normalize=True
-        )
-        
-        logger.info(f"Prepared {len(self.X)} sequences with {self.X.shape[1]} time steps and {self.X.shape[2]} features")
+        try:
+            # Load data
+            logger.info(f"Loading data from {self.data_path}")
+            self.data = load_data(self.data_path)
+            
+            # Import PCA functions
+            from feature_engineering import apply_pca_reduction
+            
+            # Apply the same PCA transformation with fixed n_components=30
+            logger.info("Applying PCA reduction to data")
+            reduced_data, pca_model, scaler_model = apply_pca_reduction(self.data, n_components=30)
+            self.data = reduced_data
+            
+            # After PCA, feature columns are now pc_1, pc_2, etc.
+            self.feature_columns = [f'pc_{i+1}' for i in range(30)]
+            
+            # Create sequences
+            logger.info("Creating training sequences")
+            self.X, self.y = create_training_sequences(
+                self.data,
+                lookback_window=LOOKBACK_WINDOW,
+                prediction_horizon=PREDICTION_HORIZON,
+                feature_columns=self.feature_columns,
+                target_column='close',
+                normalize=True
+            )
+            
+            # Split data
+            logger.info("Splitting data into train/val/test sets")
+            self.X_train, self.X_val, self.X_test, self.y_train, self.y_val, self.y_test = train_val_test_split(self.X, self.y)
+            
+            logger.info(f"Prepared {len(self.X)} sequences with {self.X.shape[1]} time steps and {self.X.shape[2]} features")
+        except Exception as e:
+            logger.error(f"Error preparing data: {str(e)}")
+            # Initialize empty arrays to avoid further errors
+            self.X = np.array([])
+            self.y = np.array([])
+            self.X_train = np.array([])
+            self.X_val = np.array([])
+            self.X_test = np.array([])
+            self.y_train = np.array([])
+            self.y_val = np.array([])
+            self.y_test = np.array([])
+            self.feature_columns = []
+            raise e
     
     def objective(self, trial: optuna.Trial) -> float:
         """
@@ -544,63 +573,101 @@ class FeatureImportanceAnalyzer:
         """
         Load and prepare data for analysis.
         """
+        # Skip data loading if X, y and feature_columns are already set
+        if (self.X is not None and self.y is not None and self.X_test is not None 
+            and self.y_test is not None and self.feature_columns is not None):
+            logger.info("Using pre-set data for feature importance analysis")
+            return
+        
+        logger.info("Loading and preparing data for feature importance analysis")
+        
         # Load data
         self.data = load_data(self.data_path)
         
-        # Generate features
-        self.data = generate_features(self.data)
+        # Generate features with PCA reduction to ensure consistency
+        n_components = 30  # Should match the value used during model training
+        logger.info(f"Applying PCA reduction with {n_components} components")
         
-        # Select feature columns (exclude NaN columns)
-        self.feature_columns = [col for col in self.data.columns if col not in ['open', 'high', 'low', 'close', 'volume']]
-        non_nan_cols = self.data[self.feature_columns].columns[~self.data[self.feature_columns].isna().any()]
-        self.feature_columns = list(non_nan_cols)
-        
-        # Create sequences
-        self.X, self.y = create_training_sequences(
-            self.data,
-            lookback_window=LOOKBACK_WINDOW,
-            prediction_horizon=PREDICTION_HORIZON,
-            feature_columns=self.feature_columns,
-            target_column='close',
-            normalize=True
-        )
-        
-        # Split data
-        self.X_train, self.X_val, self.X_test, self.y_train, self.y_val, self.y_test = train_val_test_split(self.X, self.y)
-        
-        logger.info(f"Prepared {len(self.X)} sequences with {self.X.shape[1]} time steps and {self.X.shape[2]} features")
+        try:
+            from feature_engineering import apply_pca_reduction
+            
+            # Apply the same PCA transformation as was used for training
+            reduced_data, pca_model, scaler_model = apply_pca_reduction(self.data, n_components=n_components)
+            self.data = reduced_data
+            
+            # After PCA, feature names are now pc_1, pc_2, etc.
+            self.feature_columns = [f'pc_{i+1}' for i in range(n_components)]
+            
+            # Create sequences
+            self.X, self.y = create_training_sequences(
+                self.data,
+                lookback_window=LOOKBACK_WINDOW,
+                prediction_horizon=PREDICTION_HORIZON,
+                feature_columns=self.feature_columns,
+                target_column='close',
+                normalize=True
+            )
+            
+            # Split data
+            self.X_train, self.X_val, self.X_test, self.y_train, self.y_val, self.y_test = train_val_test_split(self.X, self.y)
+            
+            logger.info(f"Prepared {len(self.X)} sequences with {self.X.shape[1]} time steps and {self.X.shape[2]} features")
+        except Exception as e:
+            logger.error(f"Error preparing data for feature importance analysis: {e}")
+            # Initialize empty arrays to prevent further errors
+            self.X = np.array([])
+            self.y = np.array([])
+            self.X_train = np.array([])
+            self.X_val = np.array([])
+            self.X_test = np.array([])
+            self.y_train = np.array([])
+            self.y_val = np.array([])
+            self.y_test = np.array([])
     
     def permutation_importance(self, n_repeats: int = 10) -> pd.DataFrame:
         """
-        Calculate permutation importance for features.
+        Calculate feature importance using permutation method.
         
         Args:
-            n_repeats: Number of permutation repeats
+            n_repeats: Number of times to repeat permutation
             
         Returns:
             DataFrame with feature importances
         """
-        # Prepare data if not already prepared
-        if self.data is None:
+        # Add debugging to see feature names
+        logger.info(f"Feature columns: {self.feature_columns}")
+
+        # Ensure data is prepared
+        if self.X_test is None:
+            logger.info("Test data not found, preparing data...")
             self.prepare_data()
+            
+            # Check again after preparation
+            if self.X_test is None or len(self.X_test) == 0:
+                logger.error("Could not prepare test data for feature importance analysis")
+                # Return empty DataFrame with proper columns
+                return pd.DataFrame(columns=['feature', 'importance', 'std'])
         
-        # Get baseline performance
+        # Get baseline error
         baseline_metrics = self.model.evaluate(self.X_test, self.y_test)
         baseline_error = baseline_metrics['mae']
         
-        # Calculate feature importances
+        logger.info(f"Baseline MAE: {baseline_error:.6f}")
+        
+        # Calculate importance for each feature
         importances = []
         
-        for i, feature_name in enumerate(tqdm(self.feature_columns, desc="Calculating feature importance")):
+        for i, feature_name in enumerate(self.feature_columns):
+            logger.info(f"Calculating importance for feature {feature_name} ({i+1}/{len(self.feature_columns)})")
+            
             feature_importance = []
             
-            for _ in range(n_repeats):
+            for r in range(n_repeats):
                 # Create a copy of the test data
                 X_permuted = self.X_test.copy()
                 
-                # Permute feature across all time steps
-                for t in range(X_permuted.shape[1]):
-                    # Shuffle the feature values across samples
+                # Permute the feature across all time steps
+                for t in range(X_permuted.shape[1]):  # For each time step
                     permuted_values = X_permuted[:, t, i].copy()
                     np.random.shuffle(permuted_values)
                     X_permuted[:, t, i] = permuted_values
@@ -639,6 +706,19 @@ class FeatureImportanceAnalyzer:
         # Calculate permutation importance
         importance_df = self.permutation_importance()
         
+        # Ensure importance_df has the right structure
+        if not isinstance(importance_df, pd.DataFrame):
+            logger.warning("Importance result is not a DataFrame, converting...")
+            if isinstance(importance_df, list):
+                # Convert list of dicts to DataFrame
+                importance_df = pd.DataFrame(importance_df)
+            elif isinstance(importance_df, dict):
+                # Convert dict to DataFrame
+                importance_df = pd.DataFrame([
+                    {"feature": k, "importance": v} 
+                    for k, v in importance_df.items()
+                ])
+        
         # Save results
         result_path = self.save_results(importance_df)
         
@@ -646,7 +726,8 @@ class FeatureImportanceAnalyzer:
             'importance': importance_df,
             'result_path': result_path
         }
-    
+
+
     def save_results(self, importance_df: pd.DataFrame) -> str:
         """
         Save analysis results.
@@ -663,6 +744,24 @@ class FeatureImportanceAnalyzer:
         # Create result directory
         result_path = os.path.join(self.result_dir, f"feature_importance_{timestamp}")
         os.makedirs(result_path, exist_ok=True)
+
+        # Ensure importance_df is a DataFrame with the right columns
+        if not isinstance(importance_df, pd.DataFrame):
+            logger.warning("Converting importance results to DataFrame")
+            if isinstance(importance_df, list):
+                importance_df = pd.DataFrame(importance_df)
+            elif isinstance(importance_df, dict):
+                importance_df = pd.DataFrame([
+                    {"feature": k, "importance": v} 
+                    for k, v in importance_df.items()
+                ])
+        
+        # Ensure the DataFrame has required columns
+        required_columns = ['feature', 'importance']
+        if not all(col in importance_df.columns for col in required_columns):
+            logger.error(f"Importance DataFrame missing required columns: {required_columns}")
+            # Create a placeholder DataFrame if needed
+            importance_df = pd.DataFrame(columns=required_columns)
         
         # Save importance table
         importance_path = os.path.join(result_path, "feature_importance.csv")
@@ -683,14 +782,15 @@ class FeatureImportanceAnalyzer:
         bars = ax.barh(plot_df['feature'], plot_df['importance'])
         
         # Add error bars
-        ax.errorbar(
-            plot_df['importance'],
-            plot_df['feature'],
-            xerr=plot_df['std'],
-            fmt='none',
-            ecolor='black',
-            capsize=5
-        )
+        if 'std' in plot_df.columns:
+            ax.errorbar(
+                plot_df['importance'],
+                plot_df['feature'],
+                xerr=plot_df['std'],
+                fmt='none',
+                ecolor='black',
+                capsize=5
+            )
         
         # Color bars by importance
         for i, bar in enumerate(bars):
@@ -709,6 +809,14 @@ class FeatureImportanceAnalyzer:
         plt.savefig(importance_plot_path)
         plt.close()
         
+        # Get the top features
+        top_features = list(importance_df.sort_values('importance', ascending=False).head(5)['feature'])
+        
+        # Calculate importance sums
+        top_features_importance_sum = importance_df.head(5)['importance'].sum()  # FIX: Changed from op_features_importance_sum
+        total_importance_sum = importance_df['importance'].sum()
+        percentage = (top_features_importance_sum / total_importance_sum * 100) if total_importance_sum != 0 else 0
+        
         # Generate HTML report
         report_html = f"""
         <!DOCTYPE html>
@@ -716,24 +824,20 @@ class FeatureImportanceAnalyzer:
         <head>
             <title>Feature Importance Analysis</title>
             <meta charset="UTF-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1">
-            <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.0.2/dist/css/bootstrap.min.css" rel="stylesheet">
             <style>
-                body {{ font-family: Arial, sans-serif; padding: 20px; }}
-                .container {{ max-width: 1200px; margin: 0 auto; }}
-                h1, h2 {{ color: #333; }}
-                .table {{ margin-bottom: 30px; }}
+                body {{ padding: 20px; }}
+                .container {{ max-width: 1200px; }}
             </style>
         </head>
         <body>
             <div class="container">
                 <h1>Feature Importance Analysis</h1>
-                <p>Generated on {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
+                <p class="lead">Generated on {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}</p>
                 
-                <h2>Feature Importance</h2>
-                <p>Features ranked by importance (increase in MAE when permuted):</p>
-                
-                <img src="{importance_plot_path}" alt="Feature Importance" style="max-width:100%;">
+                <h2>Visualization</h2>
+                <img src="feature_importance.png" alt="Feature Importance" style="max-width:100%;">
                 
                 <h2>Importance Table</h2>
                 <table class="table table-striped">
@@ -750,12 +854,13 @@ class FeatureImportanceAnalyzer:
         
         # Add feature rows
         for i, (_, row) in enumerate(importance_df.iterrows()):
+            std_val = row.get('std', 0)
             report_html += f"""
                 <tr>
                     <td>{i+1}</td>
                     <td>{row['feature']}</td>
                     <td>{row['importance']:.6f}</td>
-                    <td>{row['std']:.6f}</td>
+                    <td>{std_val:.6f}</td>
                 </tr>
             """
         
@@ -775,11 +880,10 @@ class FeatureImportanceAnalyzer:
         """
         
         # Add key findings
-        top_features = importance_df.head(5)['feature'].tolist()
         report_html += f"""
                     <li>The most important features are: {', '.join(top_features)}</li>
                     <li>A total of {sum(importance_df['importance'] > 0)} features have positive importance</li>
-                    <li>The top 5 features account for {top_features['importance'].sum() / importance_df['importance'].sum() * 100:.1f}% of total importance</li>
+                    <li>The top 5 features account for {percentage:.1f}% of total importance</li>
         """
         
         report_html += """

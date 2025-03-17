@@ -524,6 +524,15 @@ class FeatureEngineer:
         self.add_market_structure_features()
         self.create_advanced_features()
         
+        # After all features are generated, before returning
+        print("\n===== FEATURES GENERATED =====")
+        for i, feature in enumerate(self.df.columns):
+            if feature not in ['open', 'high', 'low', 'close', 'volume']:  # Skip price columns
+                print(f"{i+1}. {feature}")
+        print(f"Total features: {len(self.df.columns)}")
+        print("=============================\n")
+        
+
         # Return the processed DataFrame
         return self.df
     
