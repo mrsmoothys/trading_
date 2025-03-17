@@ -617,53 +617,68 @@ class TradingStrategy:
         return profit_amount, profit_percentage
     
     def generate_signals(self) -> pd.DataFrame:
-        """Generate trading signals from model predictions."""
+        """Generate trading signals with enhanced feature logic."""
         if self.data is None:
             raise ValueError("Data not set. Call set_data() first.")
         
-        # Add feature consistency check
-        from feature_consistency import ensure_feature_consistency
-        self.data = ensure_feature_consistency(self.data, required_feature_count=self.expected_feature_count)
-
         # Add signal column
         signals = self.data.copy()
         signals['signal'] = 0
         
-        # Get feature columns
-        feature_columns = [col for col in signals.columns if col not in ['open', 'high', 'low', 'close', 'volume', 'signal']]
-        
-        # Limit features to match model input shape
-        expected_features = self.model.input_shape[2]
-        if len(feature_columns) > expected_features:
-            logger.warning(f"Limiting features from {len(feature_columns)} to {expected_features} to match model")
-            feature_columns = feature_columns[:expected_features]
-        
-        # Generate predictions
+        # Get model prediction signal
         for i in range(self.lookback_window, len(signals)):
-            # Create input sequence
-            sequence = signals[feature_columns].iloc[i-self.lookback_window:i].values
+            # Create sequence for model prediction
+            X = self._prepare_model_input(signals, i)
             
-            # Normalize sequence
-            mean = np.mean(sequence, axis=0)
-            std = np.std(sequence, axis=0)
-            std = np.where(std == 0, 1e-8, std)
-            normalized_sequence = (sequence - mean) / std
-            
-            # Reshape for model input
-            X = np.expand_dims(normalized_sequence, axis=0)
-            
-            # Make prediction
+            # Get model prediction
             pred = self.model.predict(X)[0]
+            predicted_return = (pred[-1] / signals['close'].iloc[i]) - 1
             
-            # Generate signal from prediction
-            current_price = signals['close'].iloc[i]
-            predicted_price = pred[-1]
-            predicted_return = (predicted_price / current_price) - 1
-            
+            # Base signal from model prediction
+            base_signal = 0
             if predicted_return > self.threshold:
-                signals.loc[signals.index[i], 'signal'] = 1
+                base_signal = 1
             elif predicted_return < -self.threshold:
+                base_signal = -1
+            
+            # Enhance signal with pattern recognition
+            signal_strength = base_signal
+            
+            # Strengthen bullish signals with confirmation
+            if base_signal > 0:
+                # Strengthen if at support
+                if signals['at_support'].iloc[i] > 0:
+                    signal_strength += 0.5
+                
+                # Strengthen if bullish candle pattern
+                if signals['bullish_engulfing'].iloc[i] > 0 or signals['hammer'].iloc[i] > 0 or signals['morning_star'].iloc[i] > 0:
+                    signal_strength += 0.5
+                
+                # Reduce if against strong trend
+                if signals['strong_downtrend'].iloc[i] > 0:
+                    signal_strength -= 1
+            
+            # Strengthen bearish signals with confirmation
+            elif base_signal < 0:
+                # Strengthen if at resistance
+                if signals['at_resistance'].iloc[i] > 0:
+                    signal_strength -= 0.5
+                
+                # Strengthen if bearish candle pattern
+                if signals['bearish_engulfing'].iloc[i] > 0 or signals['shooting_star'].iloc[i] > 0 or signals['evening_star'].iloc[i] > 0:
+                    signal_strength -= 0.5
+                
+                # Reduce if against strong trend
+                if signals['strong_uptrend'].iloc[i] > 0:
+                    signal_strength += 1
+            
+            # Convert signal strength to discrete signal
+            if signal_strength >= 1:
+                signals.loc[signals.index[i], 'signal'] = 1
+            elif signal_strength <= -1:
                 signals.loc[signals.index[i], 'signal'] = -1
+            else:
+                signals.loc[signals.index[i], 'signal'] = 0
         
         return signals
     
@@ -894,12 +909,7 @@ class MLTradingStrategy(TradingStrategy):
             # Continue with original data if transformation fails
     
     def generate_signals(self) -> pd.DataFrame:
-        """
-        Generate trading signals from model predictions.
-        
-        Returns:
-            DataFrame with added signal column
-        """
+        """Generate trading signals with enhanced logic that works with or without PCA."""
         if self.data is None:
             raise ValueError("Data not set. Call set_data() first.")
         
@@ -907,37 +917,102 @@ class MLTradingStrategy(TradingStrategy):
         signals = self.data.copy()
         signals['signal'] = 0
         
-        # Need at least lookback_window candles for prediction
-        if len(signals) <= self.lookback_window:
-            return signals
-        
-        # Check if we're using PCA components
+        # Check if we're using PCA components or raw features
         pca_cols = [col for col in signals.columns if col.startswith('pc_')]
+        using_pca = len(pca_cols) > 0
         
-        if pca_cols:
-            # We're using PCA - only use the PCA components for prediction
-            feature_columns = pca_cols
-            logger.info(f"Using {len(feature_columns)} PCA components for signal generation")
-        else:
-            # Standard mode - get all non-OHLCV columns
-            feature_columns = [col for col in signals.columns 
-                            if col not in ['open', 'high', 'low', 'close', 'volume', 'signal']]
+        # Define feature columns based on what's available
+        feature_columns = pca_cols if using_pca else [
+            col for col in signals.columns 
+            if col not in ['open', 'high', 'low', 'close', 'volume', 'signal']
+        ]
         
-        # Check model input shape compatibility
-        model_input_dim = 30  # Hard-coded to match our fixed PCA components
+        # Generate predictions for each candle
+        for i in range(self.lookback_window, len(signals)):
+            try:
+                # Get lookback window for features
+                window_data = signals[feature_columns].iloc[i-self.lookback_window:i].values
+                
+                # Normalize data
+                mean = np.mean(window_data, axis=0)
+                std = np.std(window_data, axis=0)
+                std = np.where(std == 0, 1e-8, std)  # Avoid division by zero
+                window_data_norm = (window_data - mean) / std
+                
+                # Reshape for model input (add batch dimension)
+                X = np.expand_dims(window_data_norm, axis=0)
+                
+                # Get prediction
+                pred = self.model.predict(X)[0]
+                
+                # Calculate predicted return
+                current_price = signals['close'].iloc[i]
+                predicted_price = pred[-1]  # Last value in prediction horizon
+                predicted_return = (predicted_price / current_price) - 1
+                
+                # Base signal from model prediction
+                if predicted_return > self.threshold:
+                    base_signal = 1
+                elif predicted_return < -self.threshold:
+                    base_signal = -1
+                else:
+                    base_signal = 0
+                
+                # If using PCA, we can't enhance with specific features
+                if using_pca:
+                    signals.loc[signals.index[i], 'signal'] = base_signal
+                    continue
+                
+                # Otherwise, enhance signal with pattern recognition
+                signal_strength = base_signal
+                
+                # Only apply enhancements if we have the necessary features
+                # Check for candlestick pattern features
+                if 'bullish_engulfing' in signals.columns and base_signal > 0:
+                    if signals['bullish_engulfing'].iloc[i] > 0 or signals['hammer'].iloc[i] > 0:
+                        signal_strength += 0.25
+                
+                if 'bearish_engulfing' in signals.columns and base_signal < 0:
+                    if signals['bearish_engulfing'].iloc[i] > 0 or signals['shooting_star'].iloc[i] > 0:
+                        signal_strength -= 0.25
+                
+                # Check for market structure features
+                if 'at_support' in signals.columns and base_signal > 0:
+                    if signals['at_support'].iloc[i] > 0:
+                        signal_strength += 0.25
+                
+                if 'at_resistance' in signals.columns and base_signal < 0:
+                    if signals['at_resistance'].iloc[i] > 0:
+                        signal_strength -= 0.25
+                
+                # Check for trend features
+                if 'strong_uptrend' in signals.columns:
+                    if signals['strong_uptrend'].iloc[i] > 0 and base_signal < 0:
+                        signal_strength += 0.5  # Reduce strength of bearish signal in strong uptrend
+                    elif signals['strong_downtrend'].iloc[i] > 0 and base_signal > 0:
+                        signal_strength -= 0.5  # Reduce strength of bullish signal in strong downtrend
+                
+                # Check for volatility features
+                if 'volatility_regime' in signals.columns:
+                    vol_regime = signals['volatility_regime'].iloc[i]
+                    if vol_regime > 0:  # High volatility - amplify signal
+                        signal_strength *= 1.2
+                    elif vol_regime < 0:  # Low volatility - reduce signal
+                        signal_strength *= 0.8
+                
+                # Convert signal strength to discrete signal
+                if signal_strength >= 0.75:
+                    signals.loc[signals.index[i], 'signal'] = 1
+                elif signal_strength <= -0.75:
+                    signals.loc[signals.index[i], 'signal'] = -1
+                else:
+                    signals.loc[signals.index[i], 'signal'] = 0
+                    
+            except Exception as e:
+                logger.error(f"Error generating signal at index {i}: {e}")
+                # Continue to next candle
         
-        if len(feature_columns) != model_input_dim:
-            logger.warning(f"Feature count mismatch: model expects {model_input_dim} features, "
-                        f"but {len(feature_columns)} are available")
-            
-            # Adjust feature count to match model expectations
-            if len(feature_columns) > model_input_dim:
-                logger.warning(f"Truncating features to match model input shape")
-                feature_columns = feature_columns[:model_input_dim]
-            else:
-                # Not enough features
-                logger.error(f"Insufficient features for model input")
-                return signals
+        return signals
         
         # Generate predictions for each candle
         for i in range(self.lookback_window, len(signals)):

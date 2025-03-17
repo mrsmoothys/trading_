@@ -615,14 +615,7 @@ def apply_pca_reduction(data, n_components=30):
 
 def generate_features(df: pd.DataFrame, feature_sets: Dict[str, List[str]] = None, apply_pca: bool = False, n_components: int = 30) -> pd.DataFrame:
     """
-    Generate features for the given DataFrame.
-    
-    Args:
-        df: DataFrame with OHLCV data
-        feature_sets: Dictionary of feature sets to generate
-        
-    Returns:
-        DataFrame with generated features
+    Generate features with dimensional consistency.
     """
     if feature_sets is None:
         feature_sets = FEATURE_SETS
@@ -630,33 +623,320 @@ def generate_features(df: pd.DataFrame, feature_sets: Dict[str, List[str]] = Non
     # Initialize feature engineer
     feature_engineer = FeatureEngineer(df)
     
-    # Generate all features
+    # Generate standard indicators first
     processed_df = feature_engineer.generate_all_features()
     
-    # Ensure all columns are numeric before PCA
-    for col in processed_df.columns:
-        if col not in ['open', 'high', 'low', 'close', 'volume']:
-            try:
-                processed_df[col] = pd.to_numeric(processed_df[col], errors='coerce')
-            except Exception as e:
-                logger.warning(f"Error converting column {col} to numeric: {e}")
-                # Remove problematic column
-                processed_df = processed_df.drop(col, axis=1)
-
-
-     # Apply PCA if requested
+    # Apply new feature functions
+    processed_df = detect_candlestick_patterns(processed_df)
+    processed_df = detect_market_structure(processed_df)
+    processed_df = enhance_trend_features(processed_df)
+    processed_df = add_volatility_features(processed_df)
+    
+    # Register all features to maintain consistency
+    feature_registry = {}
+    processed_df, feature_registry = register_features(processed_df, feature_registry)
+    
+    # Before PCA, ensure we have consistent handling
     if apply_pca:
         logger.info(f"Applying PCA to reduce features to {n_components} components")
-        processed_df = feature_engineer.apply_pca(n_components)
+        processed_df, pca_model, scaler_model = apply_pca_reduction(processed_df, n_components=n_components)
         
-        # Store PCA and scaler models for later use
-        feature_engineer.pca_applied = True
-        return processed_df, feature_engineer.pca, feature_engineer.scaler
+        # Ensure exactly n_components after PCA
+        processed_df = ensure_feature_consistency(processed_df, required_feature_count=n_components)
+        
+        return processed_df, pca_model, scaler_model
+    else:
+        # Without PCA, select a consistent feature set based on importance
+        feature_cols = [col for col in processed_df.columns if col not in ['open', 'high', 'low', 'close', 'volume', 'signal']]
+        
+        # If we have too many features, select most important from each category
+        if len(feature_cols) > n_components:
+            selected_features = []
+            # Select some features from each category
+            for category, features in feature_registry.items():
+                # Take up to a proportional number from each category
+                category_limit = max(1, int(n_components * len(features) / len(feature_cols)))
+                selected_features.extend(features[:category_limit])
+            
+            # If still too many, truncate
+            if len(selected_features) > n_components:
+                selected_features = selected_features[:n_components]
+            
+            # If too few, add more generic features
+            while len(selected_features) < n_components:
+                remaining = [f for f in feature_cols if f not in selected_features]
+                if not remaining:
+                    break
+                selected_features.append(remaining[0])
+            
+            # Create a new dataframe with only selected features plus OHLCV
+            columns_to_keep = ['open', 'high', 'low', 'close', 'volume'] + selected_features
+            processed_df = processed_df[columns_to_keep]
+        
+        # Ensure exact feature count
+        processed_df = ensure_feature_consistency(processed_df, required_feature_count=n_components)
+        
+        return processed_df
+
+def detect_candlestick_patterns(df: pd.DataFrame) -> pd.DataFrame:
+    """Add candlestick pattern recognition features to the dataframe."""
+    # Create copies of price data for clarity
+    open = df['open']
+    high = df['high']
+    low = df['low']
+    close = df['close']
     
-   # Replace deprecated method with newer methods
-    processed_df = processed_df.ffill().fillna(0)
+    # Determine candle body and shadow sizes
+    body_size = abs(close - open)
+    upper_shadow = high - np.maximum(close, open)
+    lower_shadow = np.minimum(close, open) - low
     
-    return processed_df
+    # Doji (small body, shadows significantly larger)
+    df['doji'] = (body_size < (0.1 * (high - low))).astype(int)
+    
+    # Hammer (small body at top, long lower shadow)
+    df['hammer'] = ((body_size < 0.3 * (high - low)) & 
+                   (lower_shadow > 2 * body_size) & 
+                   (upper_shadow < 0.2 * lower_shadow)).astype(int)
+    
+    # Shooting Star (small body at bottom, long upper shadow)
+    df['shooting_star'] = ((body_size < 0.3 * (high - low)) & 
+                          (upper_shadow > 2 * body_size) & 
+                          (lower_shadow < 0.2 * upper_shadow)).astype(int)
+    
+    # Engulfing patterns (multi-candle patterns)
+    bullish_engulfing = ((open.shift(1) > close.shift(1)) &  # Previous candle is bearish
+                         (close > open) &  # Current candle is bullish
+                         (open <= close.shift(1)) &  # Current open below previous close
+                         (close >= open.shift(1)))  # Current close above previous open
+    
+    bearish_engulfing = ((open.shift(1) < close.shift(1)) &  # Previous candle is bullish
+                         (close < open) &  # Current candle is bearish
+                         (open >= close.shift(1)) &  # Current open above previous close
+                         (close <= open.shift(1)))  # Current close below previous open
+    
+    df['bullish_engulfing'] = bullish_engulfing.astype(int)
+    df['bearish_engulfing'] = bearish_engulfing.astype(int)
+    
+    # Morning & Evening Stars (three-candle patterns)
+    df['morning_star'] = ((close.shift(2) < open.shift(2)) &  # First candle bearish
+                          (abs(close.shift(1) - open.shift(1)) < 0.3 * body_size.shift(2)) &  # Second candle small
+                          (close > open) &  # Third candle bullish
+                          (close > (open.shift(2) + close.shift(2))/2)).astype(int)  # Closed above midpoint of first
+    
+    df['evening_star'] = ((close.shift(2) > open.shift(2)) &  # First candle bullish
+                          (abs(close.shift(1) - open.shift(1)) < 0.3 * body_size.shift(2)) &  # Second candle small
+                          (close < open) &  # Third candle bearish
+                          (close < (open.shift(2) + close.shift(2))/2)).astype(int)  # Closed below midpoint of first
+    
+    return df
+
+
+def detect_market_structure(df: pd.DataFrame, window: int = 5) -> pd.DataFrame:
+    """Add market structure detection features."""
+    # Identify swing highs and lows
+    df['swing_high'] = 0
+    df['swing_low'] = 0
+    
+    for i in range(window, len(df) - window):
+        # Check for swing high
+        if all(df['high'].iloc[i] > df['high'].iloc[i-window:i]) and \
+           all(df['high'].iloc[i] > df['high'].iloc[i+1:i+window+1]):
+            df.loc[df.index[i], 'swing_high'] = 1
+        
+        # Check for swing low
+        if all(df['low'].iloc[i] < df['low'].iloc[i-window:i]) and \
+           all(df['low'].iloc[i] < df['low'].iloc[i+1:i+window+1]):
+            df.loc[df.index[i], 'swing_low'] = 1
+    
+    # Identify trend direction based on swing points
+    df['higher_highs'] = 0
+    df['higher_lows'] = 0
+    df['lower_highs'] = 0
+    df['lower_lows'] = 0
+    
+    # Get arrays of swing points
+    swing_high_indices = df.index[df['swing_high'] == 1]
+    swing_low_indices = df.index[df['swing_low'] == 1]
+    
+    # Analyze sequence of swing highs
+    for i in range(1, len(swing_high_indices)):
+        current_idx = swing_high_indices[i]
+        prev_idx = swing_high_indices[i-1]
+        if df.loc[current_idx, 'high'] > df.loc[prev_idx, 'high']:
+            df.loc[current_idx, 'higher_highs'] = 1
+        else:
+            df.loc[current_idx, 'lower_highs'] = 1
+    
+    # Analyze sequence of swing lows
+    for i in range(1, len(swing_low_indices)):
+        current_idx = swing_low_indices[i]
+        prev_idx = swing_low_indices[i-1]
+        if df.loc[current_idx, 'low'] > df.loc[prev_idx, 'low']:
+            df.loc[current_idx, 'higher_lows'] = 1
+        else:
+            df.loc[current_idx, 'lower_lows'] = 1
+    
+    # Identify support and resistance zones
+    df['at_support'] = 0
+    df['at_resistance'] = 0
+    
+    # Create a price distance measure from recent swing points
+    for i in range(window, len(df)):
+        # Look back for recent swing lows for support
+        for j in range(i-1, max(0, i-50), -1):
+            if df.loc[df.index[j], 'swing_low'] == 1:
+                support_level = df.loc[df.index[j], 'low']
+                if abs(df.loc[df.index[i], 'low'] - support_level) / support_level < 0.01:
+                    df.loc[df.index[i], 'at_support'] = 1
+                break
+        
+        # Look back for recent swing highs for resistance
+        for j in range(i-1, max(0, i-50), -1):
+            if df.loc[df.index[j], 'swing_high'] == 1:
+                resistance_level = df.loc[df.index[j], 'high']
+                if abs(df.loc[df.index[i], 'high'] - resistance_level) / resistance_level < 0.01:
+                    df.loc[df.index[i], 'at_resistance'] = 1
+                break
+    
+    return df
+
+
+def enhance_trend_features(df: pd.DataFrame) -> pd.DataFrame:
+    """Add enhanced trend detection features."""
+    # Multiple timeframe trend alignment
+    # Short-term trend
+    df['sma_20'] = df['close'].rolling(20).mean()
+    # Medium-term trend
+    df['sma_50'] = df['close'].rolling(50).mean()
+    # Long-term trend
+    df['sma_200'] = df['close'].rolling(200).mean()
+    
+    # Trend alignment score (+1 for each aligned trend direction)
+    df['trend_alignment'] = 0
+    
+    # Short-term trend direction
+    df['trend_short'] = (df['close'] > df['sma_20']).astype(int) * 2 - 1
+    
+    # Medium-term trend direction
+    df['trend_medium'] = (df['close'] > df['sma_50']).astype(int) * 2 - 1
+    
+    # Long-term trend direction
+    df['trend_long'] = (df['close'] > df['sma_200']).astype(int) * 2 - 1
+    
+    # Calculate alignment (values from -3 to +3)
+    df['trend_alignment'] = df['trend_short'] + df['trend_medium'] + df['trend_long']
+    
+    # Strong uptrend indicator (all timeframes aligned up)
+    df['strong_uptrend'] = (df['trend_alignment'] == 3).astype(int)
+    
+    # Strong downtrend indicator (all timeframes aligned down)
+    df['strong_downtrend'] = (df['trend_alignment'] == -3).astype(int)
+    
+    # Trend reversal warning: short-term opposes longer-term trends
+    df['reversal_warning'] = ((df['trend_short'] != df['trend_long']) & 
+                             (df['trend_medium'] == df['trend_long'])).astype(int)
+    
+    # Trend strength using ADX
+    from ta.trend import ADXIndicator
+    adx_indicator = ADXIndicator(df['high'], df['low'], df['close'])
+    df['adx'] = adx_indicator.adx()
+    df['adx_pos'] = adx_indicator.adx_pos()
+    df['adx_neg'] = adx_indicator.adx_neg()
+    
+    # Trend strength categories
+    df['strong_trend'] = (df['adx'] > 25).astype(int)
+    df['very_strong_trend'] = (df['adx'] > 50).astype(int)
+    df['weak_trend'] = ((df['adx'] > 10) & (df['adx'] <= 25)).astype(int)
+    
+    return df
+
+def add_volatility_features(df: pd.DataFrame) -> pd.DataFrame:
+    """Add volatility-based features."""
+    # ATR calculation
+    from ta.volatility import AverageTrueRange
+    df['atr'] = AverageTrueRange(df['high'], df['low'], df['close']).average_true_range()
+    
+    # Normalized ATR (as percentage of price)
+    df['atr_pct'] = df['atr'] / df['close'] * 100
+    
+    # Volatility regime detection
+    df['volatility_regime'] = 0  # 0: normal, 1: high, -1: low
+    
+    # Calculate rolling volatility using standard deviation of returns
+    df['returns'] = df['close'].pct_change()
+    df['rolling_vol'] = df['returns'].rolling(20).std() * np.sqrt(20)  # Annualized
+    
+    # Calculate historical percentiles for volatility
+    vol_75th = df['rolling_vol'].quantile(0.75)
+    vol_25th = df['rolling_vol'].quantile(0.25)
+    
+    # Identify volatility regimes
+    df.loc[df['rolling_vol'] > vol_75th, 'volatility_regime'] = 1  # High volatility
+    df.loc[df['rolling_vol'] < vol_25th, 'volatility_regime'] = -1  # Low volatility
+    
+    # Volatility expansion/contraction
+    df['vol_expansion'] = (df['rolling_vol'] > df['rolling_vol'].shift(5)).astype(int)
+    df['vol_contraction'] = (df['rolling_vol'] < df['rolling_vol'].shift(5)).astype(int)
+    
+    # Bollinger Bands width as volatility measure
+    from ta.volatility import BollingerBands
+    bb = BollingerBands(df['close'])
+    df['bb_width'] = (bb.bollinger_hband() - bb.bollinger_lband()) / bb.bollinger_mavg()
+    
+    # Bollinger Band squeeze (narrowing bands)
+    df['bb_squeeze'] = (df['bb_width'] < df['bb_width'].rolling(20).mean()).astype(int)
+    
+    return df
+
+
+def register_features(df: pd.DataFrame, feature_registry: Dict[str, List[str]]) -> Tuple[pd.DataFrame, Dict[str, List[str]]]:
+    """
+    Register all features in the dataframe to maintain consistency.
+    
+    Args:
+        df: DataFrame with features
+        feature_registry: Registry of feature categories
+        
+    Returns:
+        Updated dataframe and feature registry
+    """
+    # Current feature columns (excluding OHLCV)
+    feature_cols = [col for col in df.columns if col not in ['open', 'high', 'low', 'close', 'volume', 'signal']]
+    
+    # Categorize features
+    candlestick_features = [col for col in feature_cols if col in [
+        'doji', 'hammer', 'shooting_star', 'bullish_engulfing', 'bearish_engulfing',
+        'morning_star', 'evening_star'
+    ]]
+    
+    market_structure_features = [col for col in feature_cols if col in [
+        'swing_high', 'swing_low', 'higher_highs', 'higher_lows', 'lower_highs', 'lower_lows',
+        'at_support', 'at_resistance'
+    ]]
+    
+    trend_features = [col for col in feature_cols if col in [
+        'trend_short', 'trend_medium', 'trend_long', 'trend_alignment',
+        'strong_uptrend', 'strong_downtrend', 'reversal_warning',
+        'adx', 'adx_pos', 'adx_neg', 'strong_trend', 'very_strong_trend', 'weak_trend'
+    ]]
+    
+    volatility_features = [col for col in feature_cols if col in [
+        'atr', 'atr_pct', 'volatility_regime', 'rolling_vol', 'vol_expansion', 
+        'vol_contraction', 'bb_width', 'bb_squeeze'
+    ]]
+    
+    # Update registry
+    feature_registry['candlestick'] = candlestick_features
+    feature_registry['market_structure'] = market_structure_features
+    feature_registry['trend'] = trend_features
+    feature_registry['volatility'] = volatility_features
+    
+    return df, feature_registry
+
+
+
+
 
 if __name__ == "__main__":
     # Test the feature generation process
