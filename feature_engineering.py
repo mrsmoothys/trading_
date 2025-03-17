@@ -701,6 +701,8 @@ def prepare_data_for_pca_consistency(data, scaler_model, pca_model, original_fea
     Returns:
         DataFrame with consistent PCA components
     """
+    logger = logging.getLogger(__name__)
+    
     # Extract OHLCV columns which we'll keep unchanged
     ohlcv_columns = ['open', 'high', 'low', 'close', 'volume']
     ohlcv_data = data[ohlcv_columns].copy()
@@ -720,17 +722,32 @@ def prepare_data_for_pca_consistency(data, scaler_model, pca_model, original_fea
     # Create a DataFrame with all required features, filling missing ones with zeros
     feature_data = pd.DataFrame(index=data.index)
     
+    # First, check for columns in data that weren't in the original feature set
+    extra_columns = [col for col in data.columns 
+                     if col not in ohlcv_columns and col not in original_features]
+    if extra_columns:
+        logger.warning(f"Found {len(extra_columns)} extra columns in backtesting data that will be ignored: {extra_columns[:5]}...")
+    
+    # Log summary of missing features
+    missing_features = [f for f in original_features if f not in data.columns]
+    if missing_features:
+        if len(missing_features) > 5:
+            logger.warning(f"Missing {len(missing_features)} features in backtesting data, will fill with zeros. First 5: {missing_features[:5]}...")
+        else:
+            logger.warning(f"Missing features in backtesting data, will fill with zeros: {missing_features}")
+    
+    # Create feature dataframe with exact same columns as during training
     for feature in original_features:
         if feature in data.columns:
             feature_data[feature] = data[feature]
         else:
-            # Feature is missing, fill with zeros and log warning
-            logger.warning(f"Feature '{feature}' missing in backtest data, filling with zeros")
+            # Feature is missing, fill with zeros 
             feature_data[feature] = 0.0
     
-    # Handle any NaN values in feature data
+    # Handle any NaN values in feature data using modern methods
     feature_data = feature_data.replace([np.inf, -np.inf], np.nan)
-    feature_data = feature_data.fillna(method='ffill').fillna(method='bfill').fillna(0)
+    # Use ffill and bfill instead of deprecated fillna method
+    feature_data = feature_data.ffill().bfill().fillna(0)
     
     try:
         # Apply the same standardization
@@ -755,7 +772,8 @@ def prepare_data_for_pca_consistency(data, scaler_model, pca_model, original_fea
     except Exception as e:
         logger.error(f"Error during PCA transformation: {e}")
         # Return original data if transformation fails
-        return data
+        logger.warning("Returning original OHLCV data with no PCA components")
+        return ohlcv_data
 
 
 if __name__ == "__main__":

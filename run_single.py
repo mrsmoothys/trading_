@@ -623,11 +623,8 @@ def main():
 
         # Store the original feature columns before PCA transformation
         original_feature_columns = [col for col in data.columns if col not in ['open', 'high', 'low', 'close', 'volume']]
-        logger.info(f"Stored {len(original_feature_columns)} original feature columns for consistent use in backtest")
-
-        # Get PCA components as feature columns
-        feature_columns = [col for col in data.columns if col.startswith('pc_')]
-       
+        logger.info(f"Storing {len(original_feature_columns)} original feature columns for consistent use in backtest")
+            
         # Pre-process all columns to ensure numeric types before PCA
         for col in data.columns:
             if col not in ['open', 'high', 'low', 'close', 'volume']:
@@ -641,16 +638,30 @@ def main():
                     # Remove problematic column as last resort
                     data = data.drop(col, axis=1)
 
-        # Now apply PCA with clean data
+            # Now apply PCA with clean data
         try:
+            # Store a clean copy of the data with all features for later use
+            pre_pca_data = data.copy()
+            
+            # Apply PCA to reduce dimensionality
             data, pca_model, scaler_model = generate_features(data, apply_pca=True, n_components=n_components)
-            # Now feature columns are simply the PCA components plus OHLCV
+            
+            # Now feature columns are simply the PCA components
             feature_columns = [col for col in data.columns if col.startswith('pc_')]
+            logger.info(f"Successfully reduced features to {len(feature_columns)} PCA components")
+            
+            # Store feature mapping for backtest consistency
+            feature_mapping = {
+                'original_columns': original_feature_columns,
+                'pca_columns': feature_columns
+            }
         except Exception as e:
             logger.error(f"Error in PCA reduction: {e}")
             logger.info("Falling back to regular feature processing without PCA")
             data = generate_features(data, apply_pca=False)
             feature_columns = [col for col in data.columns if col not in ['open', 'high', 'low', 'close', 'volume']]
+            pca_model = None
+            scaler_model = None
 
 
         # Now feature columns are simply the PCA components plus OHLCV
@@ -814,33 +825,38 @@ def main():
             )
 
             if model_path:
+                 # Save model with feature metadata
+                model.save_model(model_path, feature_columns=feature_columns)
                 logger.info(f"Model saved to {model_path}")
                 
                 # Save PCA and scaler models
-                import pickle
-                pca_path = os.path.join(model_dir, f"pca_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pkl")
-                scaler_path = os.path.join(model_dir, f"scaler_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pkl")
-                
-                with open(pca_path, 'wb') as f:
-                    pickle.dump(pca_model, f)
-                
-                with open(scaler_path, 'wb') as f:
-                    pickle.dump(scaler_model, f)
-                
-                logger.info(f"PCA model saved to {pca_path}")
-                logger.info(f"Scaler model saved to {scaler_path}")
-
+                if pca_model is not None and scaler_model is not None:
+                    import pickle
+                    model_dir = os.path.dirname(model_path)
+                    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+                    pca_path = os.path.join(model_dir, f"pca_{timestamp}.pkl")
+                    scaler_path = os.path.join(model_dir, f"scaler_{timestamp}.pkl")
+                    
+                    with open(pca_path, 'wb') as f:
+                        pickle.dump(pca_model, f)
+                    
+                    with open(scaler_path, 'wb') as f:
+                        pickle.dump(scaler_model, f)
+                    
+                    logger.info(f"PCA model saved to {pca_path}")
+                    logger.info(f"Scaler model saved to {scaler_path}")
                 # Also save the feature column names for consistency
-                feature_mapping = {
-                    'original_columns': original_feature_columns,
-                    'pca_columns': feature_columns
-                }
-                
-                feature_mapping_path = os.path.join(model_dir, f"feature_mapping_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json")
-                with open(feature_mapping_path, 'w') as f:
-                    json.dump(feature_mapping, f)
-                
-                logger.info(f"Feature mapping saved to {feature_mapping_path}")
+                    feature_mapping = {
+                        'original_columns': original_feature_columns,
+                        'pca_columns': feature_columns,
+                        'timestamp': timestamp  # Add timestamp for matching files
+                    }
+                    
+                    feature_mapping_path = os.path.join(model_dir, f"feature_mapping_{timestamp}.json")
+                    with open(feature_mapping_path, 'w') as f:
+                        json.dump(feature_mapping, f)
+                    
+                    logger.info(f"Feature mapping saved to {feature_mapping_path}")
         
         # Step 6: Analyze feature importance if requested
         if args.feature_importance:
@@ -906,60 +922,84 @@ def main():
         )
         
         
+        # In run_single.py, update the backtest section:
+
         # Step 9: Run backtest
         logger.info("Running backtest")
 
         # Make a clean copy of the data for backtesting
-        backtest_data = data.copy()
+        if 'pre_pca_data' in locals() and pre_pca_data is not None:
+            # If we stored the pre-PCA data, use that for consistency
+            backtest_data = pre_pca_data.copy()
+            logger.info("Using stored pre-PCA data for backtest consistency")
+        else:
+            # Otherwise use the current data
+            backtest_data = data.copy()
 
         try:
             # Check if we have valid PCA and scaler models from training
             if 'pca_model' in locals() and 'scaler_model' in locals() and pca_model is not None and scaler_model is not None:
-                logger.info(f"Using existing PCA model from training for backtest")
+                logger.info(f"Using PCA model from training for backtest")
                 
-                # Store the original feature columns used during PCA fitting
-                if hasattr(pca_model, 'feature_names_in_'):
-                    pca_original_features = list(pca_model.feature_names_in_)
-                    logger.info(f"Found {len(pca_original_features)} original features from PCA model")
-                elif 'original_feature_columns' in locals() and len(original_feature_columns) > 0:
+                # Use the original feature columns from before PCA for consistency
+                if 'original_feature_columns' in locals() and len(original_feature_columns) > 0:
                     pca_original_features = original_feature_columns
                     logger.info(f"Using {len(pca_original_features)} stored original features")
+                elif hasattr(pca_model, 'feature_names_in_'):
+                    pca_original_features = list(pca_model.feature_names_in_)
+                    logger.info(f"Found {len(pca_original_features)} original features from PCA model")
                 else:
                     # Fallback to using all non-OHLCV columns from the original data
-                    pca_original_features = [col for col in data.columns 
+                    pca_original_features = [col for col in backtest_data.columns 
                                             if col not in ['open', 'high', 'low', 'close', 'volume']]
                     logger.info(f"Using {len(pca_original_features)} features from original data")
                 
                 # Prepare consistent data for PCA transformation
                 from feature_engineering import prepare_data_for_pca_consistency
-                backtest_data = prepare_data_for_pca_consistency(
+                backtest_data_pca = prepare_data_for_pca_consistency(
                     data=backtest_data,
                     scaler_model=scaler_model,
                     pca_model=pca_model,
                     original_features=pca_original_features
                 )
                 
-                # Set strategy data with PCA models
-                strategy.set_data(backtest_data, pca_model=pca_model, scaler_model=scaler_model)
-                
-                # Run backtest
-                if args.detailed_backtest:
-                    backtest_results = run_detailed_backtest(strategy=strategy, data=backtest_data, args=args)
+                # Check if PCA transformation succeeded
+                if any(col.startswith('pc_') for col in backtest_data_pca.columns):
+                    logger.info(f"Successfully applied PCA transformation for backtest with {sum(1 for col in backtest_data_pca.columns if col.startswith('pc_'))} components")
+                    
+                    # Set strategy data with PCA models
+                    strategy.set_data(backtest_data_pca, pca_model=pca_model, scaler_model=scaler_model)
+                    
+                    # Run backtest
+                    if args.detailed_backtest:
+                        backtest_results = run_detailed_backtest(strategy=strategy, data=backtest_data_pca, args=args)
+                    else:
+                        backtest_results = strategy.backtest(backtest_data_pca)
                 else:
-                    backtest_results = strategy.backtest(backtest_data)
-                    
+                    # PCA transformation failed to create expected columns
+                    raise ValueError("PCA transformation did not produce expected components")
             else:
-                logger.warning("No PCA model available from training, using original data for backtest")
-                raise ValueError("Missing PCA or scaler model")
-                    
+                raise ValueError("No PCA or scaler model available")
+                        
         except Exception as e:
             logger.error(f"PCA-based backtest failed: {e}")
             logger.info("Falling back to standard backtest without PCA")
             
             # Fall back to standard backtest
             try:
-                # Reset to original data
-                backtest_data = data.copy()
+                # Generate features on original data without PCA
+                backtest_data = generate_features(backtest_data, apply_pca=False)
+                
+                # Limit features to match model input if needed
+                feature_cols = [col for col in backtest_data.columns 
+                            if col not in ['open', 'high', 'low', 'close', 'volume']]
+                
+                max_features = 36  # Maximum model input features
+                if len(feature_cols) > max_features:
+                    logger.warning(f"Limiting feature count from {len(feature_cols)} to {max_features}")
+                    # Only keep the first max_features features
+                    extra_cols = feature_cols[max_features:]
+                    backtest_data = backtest_data.drop(columns=extra_cols)
                 
                 # Just set the data without PCA transformation
                 strategy.set_data(backtest_data)
@@ -969,7 +1009,7 @@ def main():
                     backtest_results = run_detailed_backtest(strategy=strategy, data=backtest_data, args=args)
                 else:
                     backtest_results = strategy.backtest(backtest_data)
-                        
+                            
             except Exception as e:
                 logger.error(f"Error during standard backtest: {e}")
                 # Create minimal results to avoid downstream errors
@@ -984,8 +1024,10 @@ def main():
                     },
                     'trades': [],
                     'equity_curve': [args.initial_capital],
-                    'signals': data.copy()  # Empty signals DataFrame with same structure
+                    'signals': backtest_data[['open', 'high', 'low', 'close', 'volume']].copy()  # Create valid signals DataFrame
                 }
+                # Add signal column to prevent errors
+                backtest_results['signals']['signal'] = 0
                 
         # Step 10: Save results
         results_path = os.path.join(args.results_dir, f"results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json")

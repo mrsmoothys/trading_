@@ -257,6 +257,8 @@ class Visualizer:
         
         return fig
     
+    # In the visualize.py file, modify the plot_trade_distribution function:
+
     def plot_trade_distribution(self, trades: List[Dict[str, Any]], title: str = None, save_path: Optional[str] = None) -> plt.Figure:
         """
         Plot distribution of trade profits.
@@ -271,10 +273,41 @@ class Visualizer:
         """
         if not trades:
             logger.warning("No trades to plot distribution.")
-            return None
+            # Create empty figure instead of returning None
+            fig, ax = plt.subplots()
+            ax.text(0.5, 0.5, "No trades to display", ha='center', va='center')
+            ax.set_xlabel('Profit (%)')
+            ax.set_ylabel('Number of Trades')
+            ax.set_title(title or 'Trade Profit Distribution')
+            plt.tight_layout()
+            
+            # Save if requested
+            if save_path or SAVE_PLOTS:
+                save_path = save_path or os.path.join(self.result_dir, f"trade_distribution_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png")
+                plt.savefig(save_path, dpi=300, bbox_inches='tight')
+                logger.info(f"Trade distribution plot saved to {save_path}")
+            
+            return fig
         
         # Create DataFrame
         trades_df = pd.DataFrame(trades)
+        
+        # Check data type
+        if 'profit_percentage' not in trades_df.columns:
+            logger.warning("No profit_percentage column in trades data.")
+            # Create empty figure instead of returning None
+            fig, ax = plt.subplots()
+            ax.text(0.5, 0.5, "Missing profit data", ha='center', va='center')
+            ax.set_title(title or 'Trade Profit Distribution')
+            plt.tight_layout()
+            
+            # Save if requested
+            if save_path or SAVE_PLOTS:
+                save_path = save_path or os.path.join(self.result_dir, f"trade_distribution_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png")
+                plt.savefig(save_path, dpi=300, bbox_inches='tight')
+                logger.info(f"Trade distribution plot saved to {save_path}")
+            
+            return fig
         
         # Create figure
         fig, ax = plt.subplots()
@@ -801,6 +834,8 @@ class Visualizer:
         
         return fig
     
+    # In the visualize.py file, modify the generate_backtest_dashboard function:
+
     def generate_backtest_dashboard(self, backtest_results: Dict[str, Any], title: str = None, save_path: Optional[str] = None) -> None:
         """
         Generate a comprehensive backtest dashboard with multiple plots.
@@ -821,42 +856,62 @@ class Visualizer:
         dashboard_dir = save_path or os.path.join(self.result_dir, f"dashboard_{timestamp}")
         os.makedirs(dashboard_dir, exist_ok=True)
         
-        # Extract data from results
+        # Extract data from results with safety checks
         performance = backtest_results.get('performance', {})
         equity_curve = backtest_results.get('equity_curve', [])
         trades = backtest_results.get('trades', [])
         signals = backtest_results.get('signals', pd.DataFrame())
         
+        # Ensure signals has required columns
+        if not signals.empty and not all(col in signals.columns for col in ['close']):
+            logger.warning("Signals dataframe missing required columns. Creating minimal version.")
+            # Create a minimal dataframe with required columns
+            signals = pd.DataFrame({'close': np.ones(len(equity_curve)) if equity_curve else [1]}, 
+                                index=pd.date_range(start='2020-01-01', periods=len(equity_curve) if equity_curve else 1))
+        
+        # Try/except blocks around each visualization to prevent failures
+        
         # Create equity curve with signals
-        if not signals.empty and equity_curve:
-            equity_series = pd.Series(
-                equity_curve,
-                index=signals.index[:len(equity_curve)]
-            )
-            self.plot_price_with_signals(
-                signals[['close']], 
-                trades, 
-                title="Price Chart with Trading Signals",
-                save_path=os.path.join(dashboard_dir, "price_signals.png")
-            )
+        try:
+            if not signals.empty and len(equity_curve) > 0:
+                equity_series = pd.Series(
+                    equity_curve,
+                    index=signals.index[:len(equity_curve)]
+                )
+                self.plot_price_with_signals(
+                    signals[['close']], 
+                    trades, 
+                    title="Price Chart with Trading Signals",
+                    save_path=os.path.join(dashboard_dir, "price_signals.png")
+                )
+        except Exception as e:
+            logger.error(f"Error generating price signals plot: {e}")
         
         # Create equity curve
-        if equity_curve:
-            self.plot_equity_curve(
-                equity_curve,
-                initial_capital=performance.get('initial_capital'),
-                title="Equity Curve",
-                save_path=os.path.join(dashboard_dir, "equity_curve.png")
-            )
-            
-            # Drawdown
-            self.plot_drawdown(
-                equity_curve,
-                title="Drawdown",
-                save_path=os.path.join(dashboard_dir, "drawdown.png")
-            )
-            
-            # Monthly returns
+        try:
+            if equity_curve:
+                self.plot_equity_curve(
+                    equity_curve,
+                    initial_capital=performance.get('initial_capital'),
+                    title="Equity Curve",
+                    save_path=os.path.join(dashboard_dir, "equity_curve.png")
+                )
+        except Exception as e:
+            logger.error(f"Error generating equity curve plot: {e}")
+        
+        # Drawdown
+        try:
+            if equity_curve:
+                self.plot_drawdown(
+                    equity_curve,
+                    title="Drawdown",
+                    save_path=os.path.join(dashboard_dir, "drawdown.png")
+                )
+        except Exception as e:
+            logger.error(f"Error generating drawdown plot: {e}")
+        
+        # Monthly returns
+        try:
             if isinstance(signals.index, pd.DatetimeIndex) and len(equity_curve) > 0:
                 equity_series = pd.Series(
                     equity_curve,
@@ -867,52 +922,58 @@ class Visualizer:
                     title="Monthly Returns",
                     save_path=os.path.join(dashboard_dir, "monthly_returns.png")
                 )
+        except Exception as e:
+            logger.error(f"Error generating monthly returns plot: {e}")
         
         # Trade distribution
-        if trades:
-            self.plot_trade_distribution(
-                trades,
-                title="Trade Profit Distribution",
-                save_path=os.path.join(dashboard_dir, "trade_distribution.png")
-            )
+        try:
+            if trades:
+                self.plot_trade_distribution(
+                    trades,
+                    title="Trade Profit Distribution",
+                    save_path=os.path.join(dashboard_dir, "trade_distribution.png")
+                )
+        except Exception as e:
+            logger.error(f"Error generating trade distribution plot: {e}")
         
-        # Interactive plots
-        if equity_curve:
-            try:
-                # Interactive equity curve
-                if isinstance(signals.index, pd.DatetimeIndex) and len(equity_curve) > 0:
-                    equity_series = pd.Series(
-                        equity_curve,
-                        index=signals.index[:len(equity_curve)]
-                    )
-                    self.plot_interactive_equity_curve(
-                        equity_series,
-                        trades,
-                        title="Interactive Equity Curve",
-                        save_path=os.path.join(dashboard_dir, "interactive_equity.html")
-                    )
-            except Exception as e:
-                logger.warning(f"Failed to create interactive equity curve: {e}")
+        # Interactive plots - wrap in try/except
+        try:
+            # Interactive equity curve
+            if equity_curve and isinstance(signals.index, pd.DatetimeIndex) and len(equity_curve) > 0:
+                equity_series = pd.Series(
+                    equity_curve,
+                    index=signals.index[:len(equity_curve)]
+                )
+                self.plot_interactive_equity_curve(
+                    equity_series,
+                    trades,
+                    title="Interactive Equity Curve",
+                    save_path=os.path.join(dashboard_dir, "interactive_equity.html")
+                )
+        except Exception as e:
+            logger.warning(f"Failed to create interactive equity curve: {e}")
         
         # Interactive trade analysis
-        if trades:
-            try:
+        try:
+            if trades:
                 self.plot_interactive_trade_analysis(
                     trades,
                     title="Interactive Trade Analysis",
                     save_path=os.path.join(dashboard_dir, "interactive_trade_analysis.html")
                 )
-            except Exception as e:
-                logger.warning(f"Failed to create interactive trade analysis: {e}")
+        except Exception as e:
+            logger.warning(f"Failed to create interactive trade analysis: {e}")
         
         # Create HTML dashboard
-        self._generate_dashboard_html(
-            dashboard_dir,
-            title or "Backtest Dashboard",
-            performance
-        )
-        
-        logger.info(f"Dashboard generated at {dashboard_dir}")
+        try:
+            self._generate_dashboard_html(
+                dashboard_dir,
+                title or "Backtest Dashboard",
+                performance
+            )
+            logger.info(f"Dashboard generated at {dashboard_dir}")
+        except Exception as e:
+            logger.error(f"Error generating dashboard HTML: {e}")
     
     def _generate_dashboard_html(self, dashboard_dir: str, title: str, performance: Dict[str, Any]) -> None:
         """
