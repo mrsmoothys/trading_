@@ -12,10 +12,92 @@ from scipy.signal import argrelextrema
 from statsmodels.nonparametric.kernel_regression import KernelReg
 from sklearn.decomposition import PCA
 from sklearn.preprocessing import StandardScaler
+import numba
 
 from config import FEATURE_SETS
 
 logger = logging.getLogger(__name__)
+
+
+
+def _get_cache_key(df: pd.DataFrame, feature_list: List[str]) -> str:
+    """Generate a cache key based on dataframe and features."""
+    import hashlib
+    
+    # Use the first and last 5 rows of data plus length as part of the key
+    data_sample = df.iloc[list(range(min(5, len(df)))) + 
+                          list(range(max(0, len(df)-5), len(df)))]
+    
+    # Create a hash of the data sample and features
+    key_data = str(data_sample.values.tobytes()) + str(sorted(feature_list))
+    return hashlib.md5(key_data.encode()).hexdigest()
+
+def cached_generate_features(df: pd.DataFrame, feature_list: List[str], 
+                            cache_dir: str = '/tmp/feature_cache') -> pd.DataFrame:
+    """Generate features with caching."""
+    import os
+    import pickle
+    
+    # Create cache directory if it doesn't exist
+    os.makedirs(cache_dir, exist_ok=True)
+    
+    # Generate cache key
+    cache_key = _get_cache_key(df, feature_list)
+    cache_file = os.path.join(cache_dir, f"{cache_key}.pkl")
+    
+    # Check if cache exists
+    if os.path.exists(cache_file):
+        try:
+            with open(cache_file, 'rb') as f:
+                return pickle.load(f)
+        except Exception as e:
+            logger.warning(f"Cache loading failed: {e}")
+    
+    # Calculate features
+    result_df = generate_features(df, feature_list)
+    
+    # Cache result
+    try:
+        with open(cache_file, 'wb') as f:
+            pickle.dump(result_df, f)
+    except Exception as e:
+        logger.warning(f"Cache saving failed: {e}")
+    
+    return result_df
+
+@numba.jit(nopython=True)
+def _calculate_patterns(open_values, high_values, low_values, close_values, length):
+        """Calculate candlestick patterns using JIT compilation for speed."""
+        # Pre-allocate arrays
+        doji = np.zeros(length)
+        hammer = np.zeros(length)
+        shooting_star = np.zeros(length)
+        
+        for i in range(1, length):
+            # Calculate body and shadows
+            body = abs(close_values[i] - open_values[i])
+            upper_shadow = high_values[i] - max(close_values[i], open_values[i])
+            lower_shadow = min(close_values[i], open_values[i]) - low_values[i]
+            
+            # Doji pattern
+            if body <= 0.1 * (high_values[i] - low_values[i]):
+                doji[i] = 1
+            
+            # Hammer pattern
+            if (body <= 0.3 * (high_values[i] - low_values[i]) and
+                lower_shadow >= 2 * body and 
+                upper_shadow <= 0.1 * body):
+                hammer[i] = 1
+            
+            # Shooting star pattern
+            if (body <= 0.3 * (high_values[i] - low_values[i]) and
+                upper_shadow >= 2 * body and 
+                lower_shadow <= 0.1 * body):
+                shooting_star[i] = 1
+        
+        return doji, hammer, shooting_star
+
+
 
 class FeatureEngineer:
     """
@@ -186,93 +268,66 @@ class FeatureEngineer:
         
         # Price-Volume Trend
         self.df['pvt'] = (self.df['close'].pct_change() * self.df['volume']).cumsum()
-    
+
+
     def add_candlestick_patterns(self) -> None:
         """Add candlestick pattern recognition."""
-        # Doji
-        self.df['doji'] = np.where(
-            (abs(self.df['open'] - self.df['close']) <= 0.05 * (self.df['high'] - self.df['low'])),
-            1, 0
-        )
         
-        # Engulfing patterns
-        self.df['bullish_engulfing'] = np.where(
-            (self.df['close'].shift(1) < self.df['open'].shift(1)) &  # Previous candle is bearish
-            (self.df['close'] > self.df['open']) &  # Current candle is bullish
-            (self.df['open'] <= self.df['close'].shift(1)) &  # Current open below previous close
-            (self.df['close'] >= self.df['open'].shift(1)),  # Current close above previous open
-            1, 0
-        )
+        """Add candlestick patterns using JIT compilation."""
+        # Extract numpy arrays for faster computation
+        open_values = self.df['open'].values
+        high_values = self.df['high'].values 
+        low_values = self.df['low'].values
+        close_values = self.df['close'].values
+        length = len(self.df)
         
-        self.df['bearish_engulfing'] = np.where(
-            (self.df['close'].shift(1) > self.df['open'].shift(1)) &  # Previous candle is bullish
-            (self.df['close'] < self.df['open']) &  # Current candle is bearish
-            (self.df['open'] >= self.df['close'].shift(1)) &  # Current open above previous close
-            (self.df['close'] <= self.df['open'].shift(1)),  # Current close below previous open
-            1, 0
-        )
+        # Calculate patterns using JIT-compiled function
+        try:
+            doji, hammer, shooting_star, bullish_engulfing, bearish_engulfing = _calculate_patterns(
+                open_values, high_values, low_values, close_values, length
+            )
+            
+            # Update DataFrame
+            self.df['doji'] = doji
+            self.df['hammer'] = hammer
+            self.df['shooting_star'] = shooting_star
+            self.df['bullish_engulfing'] = bullish_engulfing
+            self.df['bearish_engulfing'] = bearish_engulfing
+        except Exception as e:
+            logger.error(f"Error calculating patterns: {e}")
+            # Fall back to simple pattern calculation without numba
+            self._add_candlestick_patterns_basic()
         
-        # Hammer and Shooting Star
-        self.df['upper_shadow'] = self.df['high'] - np.maximum(self.df['open'], self.df['close'])
-        self.df['lower_shadow'] = np.minimum(self.df['open'], self.df['close']) - self.df['low']
-        self.df['body'] = abs(self.df['open'] - self.df['close'])
+    def _add_candlestick_patterns_basic(self) -> None:
+        """Add basic candlestick patterns without using numba."""
+        # Calculate doji
+        body = abs(self.df['close'] - self.df['open'])
+        height = self.df['high'] - self.df['low']
+        self.df['doji'] = (body <= 0.1 * height).astype(int)
         
-        self.df['hammer'] = np.where(
-            (self.df['lower_shadow'] >= 2 * self.df['body']) &  # Long lower shadow
-            (self.df['upper_shadow'] <= 0.1 * self.df['body']) &  # Small upper shadow
-            (self.df['body'] > 0),  # Not a doji
-            1, 0
-        )
+        # Calculate hammer
+        upper_shadow = self.df['high'] - np.maximum(self.df['open'], self.df['close'])
+        lower_shadow = np.minimum(self.df['open'], self.df['close']) - self.df['low']
+        self.df['hammer'] = ((body <= 0.3 * height) & 
+                            (lower_shadow >= 2 * body) & 
+                            (upper_shadow <= 0.1 * body)).astype(int)
         
-        self.df['shooting_star'] = np.where(
-            (self.df['upper_shadow'] >= 2 * self.df['body']) &  # Long upper shadow
-            (self.df['lower_shadow'] <= 0.1 * self.df['body']) &  # Small lower shadow
-            (self.df['body'] > 0),  # Not a doji
-            1, 0
-        )
+        # Calculate shooting star
+        self.df['shooting_star'] = ((body <= 0.3 * height) & 
+                                (upper_shadow >= 2 * body) & 
+                                (lower_shadow <= 0.1 * body)).astype(int)
         
-        # Morning and Evening Star
-        self.df['morning_star'] = np.where(
-            (self.df['close'].shift(2) < self.df['open'].shift(2)) &  # First candle is bearish
-            (abs(self.df['close'].shift(1) - self.df['open'].shift(1)) <= 0.1 * (self.df['high'].shift(1) - self.df['low'].shift(1))) &  # Second candle is doji
-            (self.df['close'] > self.df['open']) &  # Third candle is bullish
-            (self.df['close'] > (self.df['open'].shift(2) + self.df['close'].shift(2)) / 2),  # Third close above mid-point of first
-            1, 0
-        )
+        # Calculate bullish engulfing
+        self.df['bullish_engulfing'] = ((self.df['close'].shift(1) < self.df['open'].shift(1)) &  
+                                    (self.df['close'] > self.df['open']) &  
+                                    (self.df['open'] <= self.df['close'].shift(1)) &  
+                                    (self.df['close'] >= self.df['open'].shift(1))).astype(int)
         
-        self.df['evening_star'] = np.where(
-            (self.df['close'].shift(2) > self.df['open'].shift(2)) &  # First candle is bullish
-            (abs(self.df['close'].shift(1) - self.df['open'].shift(1)) <= 0.1 * (self.df['high'].shift(1) - self.df['low'].shift(1))) &  # Second candle is doji
-            (self.df['close'] < self.df['open']) &  # Third candle is bearish
-            (self.df['close'] < (self.df['open'].shift(2) + self.df['close'].shift(2)) / 2),  # Third close below mid-point of first
-            1, 0
-        )
-        
-        # Three White Soldiers and Three Black Crows
-        self.df['three_white_soldiers'] = np.where(
-            (self.df['close'].shift(2) > self.df['open'].shift(2)) &  # First candle bullish
-            (self.df['close'].shift(1) > self.df['open'].shift(1)) &  # Second candle bullish
-            (self.df['close'] > self.df['open']) &  # Third candle bullish
-            (self.df['open'].shift(1) > self.df['open'].shift(2)) &  # Each open higher than previous
-            (self.df['open'] > self.df['open'].shift(1)) &
-            (self.df['close'].shift(1) > self.df['close'].shift(2)) &  # Each close higher than previous
-            (self.df['close'] > self.df['close'].shift(1)),
-            1, 0
-        )
-        
-        self.df['three_black_crows'] = np.where(
-            (self.df['close'].shift(2) < self.df['open'].shift(2)) &  # First candle bearish
-            (self.df['close'].shift(1) < self.df['open'].shift(1)) &  # Second candle bearish
-            (self.df['close'] < self.df['open']) &  # Third candle bearish
-            (self.df['open'].shift(1) < self.df['open'].shift(2)) &  # Each open lower than previous
-            (self.df['open'] < self.df['open'].shift(1)) &
-            (self.df['close'].shift(1) < self.df['close'].shift(2)) &  # Each close lower than previous
-            (self.df['close'] < self.df['close'].shift(1)),
-            1, 0
-        )
-        
-        # Clean up temporary columns
-        self.df = self.df.drop(['upper_shadow', 'lower_shadow', 'body'], axis=1)
+        # Calculate bearish engulfing
+        self.df['bearish_engulfing'] = ((self.df['close'].shift(1) > self.df['open'].shift(1)) &  
+                                    (self.df['close'] < self.df['open']) &  
+                                    (self.df['open'] >= self.df['close'].shift(1)) &  
+                                    (self.df['close'] <= self.df['open'].shift(1))).astype(int)
     
     def add_market_structure_features(self) -> None:
         """Add market structure features like swing points, trends, etc."""
@@ -292,29 +347,31 @@ class FeatureEngineer:
         self._identify_volatility_regimes()
     
     def _identify_swing_points(self, window: int = 5) -> None:
-        """
-        Identify swing highs and lows in the price series.
+        """Identify swing highs and lows using NumPy for speed."""
+        # Get numpy arrays for faster computation
+        high_values = self.df['high'].values
+        low_values = self.df['low'].values
         
-        Args:
-            window: Window size for identifying local extrema
-        """
-        # Get high and low series
-        high_series = self.df['high']
-        low_series = self.df['low']
+        # Pre-allocate arrays for results
+        swing_high = np.zeros(len(high_values))
+        swing_low = np.zeros(len(low_values))
         
-        # Identify local maxima for swing highs
-        swing_high_indices = argrelextrema(high_series.values, np.greater_equal, order=window)[0]
-        self.df['swing_high'] = 0
-        self.df.iloc[swing_high_indices, self.df.columns.get_loc('swing_high')] = 1
+        # Generate boolean masks for conditions
+        for i in range(window, len(high_values) - window):
+            # Check if current high is greater than all window values before and after
+            is_swing_high = np.all(high_values[i] > high_values[i-window:i]) and \
+                            np.all(high_values[i] > high_values[i+1:i+window+1])
+            
+            # Check if current low is less than all window values before and after
+            is_swing_low = np.all(low_values[i] < low_values[i-window:i]) and \
+                        np.all(low_values[i] < low_values[i+1:i+window+1])
+            
+            swing_high[i] = 1 if is_swing_high else 0
+            swing_low[i] = 1 if is_swing_low else 0
         
-        # Identify local minima for swing lows
-        swing_low_indices = argrelextrema(low_series.values, np.less_equal, order=window)[0]
-        self.df['swing_low'] = 0
-        self.df.iloc[swing_low_indices, self.df.columns.get_loc('swing_low')] = 1
-        
-        # Save swing points for use in other methods
-        self.swing_high_prices = high_series.iloc[swing_high_indices].to_dict()
-        self.swing_low_prices = low_series.iloc[swing_low_indices].to_dict()
+        # Update DataFrame
+        self.df['swing_high'] = swing_high
+        self.df['swing_low'] = swing_low
     
     def _identify_trends(self, ma_fast: int = 20, ma_slow: int = 50) -> None:
         """
@@ -511,7 +568,41 @@ class FeatureEngineer:
         self.df = reduced_df
         return self.df
     
+
+    def generate_selected_features(self, feature_list: List[str]) -> pd.DataFrame:
+        """Generate only the selected features to save computation time."""
+        # Map feature names to their generation methods
+        feature_method_map = {
+            'rsi': self.add_momentum_indicators,
+            'macd': self.add_momentum_indicators,
+            'macd_signal': self.add_momentum_indicators,
+            'macd_hist': self.add_momentum_indicators,
+            'bollinger_upper': self.add_volatility_indicators,
+            'bollinger_middle': self.add_volatility_indicators,
+            'bollinger_lower': self.add_volatility_indicators,
+            'bollinger_width': self.add_volatility_indicators,
+            'adx': self.add_trend_indicators,
+            'adx_neg': self.add_trend_indicators,
+            'ema_5': self.add_trend_indicators,
+            'ema_50': self.add_trend_indicators,
+            'sma_50': self.add_trend_indicators,
+            # [map all your 36 optimized features to their generation methods]
+        }
+        
+        # Determine which methods to call based on requested features
+        methods_to_call = set()
+        for feature in feature_list:
+            if feature in feature_method_map:
+                methods_to_call.add(feature_method_map[feature])
+        
+        # Call only the required methods
+        for method in methods_to_call:
+            method()
+        
+        return self.df
+    
     def generate_all_features(self) -> pd.DataFrame:
+    
         """Generate all features and return the processed DataFrame."""
         # Standard indicators
         self.add_momentum_indicators()
@@ -534,7 +625,11 @@ class FeatureEngineer:
         
 
         # Return the processed DataFrame
+
         return self.df
+    
+    
+
     
 
 
@@ -613,70 +708,60 @@ def apply_pca_reduction(data, n_components=30):
     return reduced_data, pca, scaler
 
 
-def generate_features(df: pd.DataFrame, feature_sets: Dict[str, List[str]] = None, apply_pca: bool = False, n_components: int = 30) -> pd.DataFrame:
-    """
-    Generate features with dimensional consistency.
-    """
-    if feature_sets is None:
-        feature_sets = FEATURE_SETS
+def generate_features(df: pd.DataFrame, feature_list=None, n_jobs=4) -> pd.DataFrame:
+    """Generate features using parallel processing."""
+    from concurrent.futures import ThreadPoolExecutor
     
-    # Initialize feature engineer
-    feature_engineer = FeatureEngineer(df)
+    # Group features by category for efficient parallel processing
+    feature_groups = {
+        'momentum': ['rsi', 'macd', 'macd_signal', 'macd_hist', 'stoch_k', 'stoch_d', 
+                    'williams_r', 'ultimate_oscillator', 'price_roc', 'mfi'],
+        'volatility': ['bollinger_upper', 'bollinger_middle', 'bollinger_lower', 
+                       'bollinger_width', 'atr', 'natr', 'keltner_upper', 'keltner_lower'],
+        'trend': ['sma_50', 'ema_5', 'ema_50', 'adx', 'adx_neg', 'ichimoku_base_line', 
+                 'ichimoku_conversion_line', 'aroon_down', 'trend', 'trend_direction'],
+        'patterns': ['bullish_engulfing', 'hammer', 'shooting_star', 'evening_star', 
+                    'three_black_crows'],
+        'structure': ['swing_high', 'swing_low', 'consolidation', 'consolidation_strength', 
+                    'donchian_middle', 'donchian_upper']
+    }
     
-    # Generate standard indicators first
-    processed_df = feature_engineer.generate_all_features()
+    # Create a copy of input data
+    result_df = df.copy()
     
-    # Apply new feature functions
-    processed_df = detect_candlestick_patterns(processed_df)
-    processed_df = detect_market_structure(processed_df)
-    processed_df = enhance_trend_features(processed_df)
-    processed_df = add_volatility_features(processed_df)
+    # Calculate basic OHLCV features first (required by all)
+    result_df = _calculate_basic_features(result_df)
     
-    # Register all features to maintain consistency
-    feature_registry = {}
-    processed_df, feature_registry = register_features(processed_df, feature_registry)
+    # Determine which feature groups to calculate based on requested features
+    groups_to_calculate = set()
+    for feature in feature_list:
+        for group, features in feature_groups.items():
+            if feature in features:
+                groups_to_calculate.add(group)
     
-    # Before PCA, ensure we have consistent handling
-    if apply_pca:
-        logger.info(f"Applying PCA to reduce features to {n_components} components")
-        processed_df, pca_model, scaler_model = apply_pca_reduction(processed_df, n_components=n_components)
+    # Calculate feature groups in parallel
+    with ThreadPoolExecutor(max_workers=min(n_jobs, len(groups_to_calculate))) as executor:
+        futures = {executor.submit(_calculate_feature_group, result_df, group, 
+                                  feature_groups[group]): group 
+                  for group in groups_to_calculate}
         
-        # Ensure exactly n_components after PCA
-        processed_df = ensure_feature_consistency(processed_df, required_feature_count=n_components)
-        
-        return processed_df, pca_model, scaler_model
-    else:
-        # Without PCA, select a consistent feature set based on importance
-        feature_cols = [col for col in processed_df.columns if col not in ['open', 'high', 'low', 'close', 'volume', 'signal']]
-        
-        # If we have too many features, select most important from each category
-        if len(feature_cols) > n_components:
-            selected_features = []
-            # Select some features from each category
-            for category, features in feature_registry.items():
-                # Take up to a proportional number from each category
-                category_limit = max(1, int(n_components * len(features) / len(feature_cols)))
-                selected_features.extend(features[:category_limit])
-            
-            # If still too many, truncate
-            if len(selected_features) > n_components:
-                selected_features = selected_features[:n_components]
-            
-            # If too few, add more generic features
-            while len(selected_features) < n_components:
-                remaining = [f for f in feature_cols if f not in selected_features]
-                if not remaining:
-                    break
-                selected_features.append(remaining[0])
-            
-            # Create a new dataframe with only selected features plus OHLCV
-            columns_to_keep = ['open', 'high', 'low', 'close', 'volume'] + selected_features
-            processed_df = processed_df[columns_to_keep]
-        
-        # Ensure exact feature count
-        processed_df = ensure_feature_consistency(processed_df, required_feature_count=n_components)
-        
-        return processed_df
+        # Process results
+        for future in concurrent.futures.as_completed(futures):
+            group = futures[future]
+            try:
+                group_df = future.result()
+                # Merge the group's features back into result_df
+                for col in group_df.columns:
+                    if col not in result_df.columns:
+                        result_df[col] = group_df[col]
+            except Exception as e:
+                logger.error(f"Error calculating {group} features: {e}")
+    
+    # Keep only requested features plus OHLCV
+    all_cols = ['open', 'high', 'low', 'close', 'volume'] + feature_list
+    result_cols = [col for col in all_cols if col in result_df.columns]
+    
+    return result_df[result_cols]
 
 def detect_candlestick_patterns(df: pd.DataFrame) -> pd.DataFrame:
     """Add candlestick pattern recognition features to the dataframe."""

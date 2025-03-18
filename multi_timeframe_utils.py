@@ -22,7 +22,7 @@ def resample_to_higher_timeframe(df: pd.DataFrame, current_timeframe: str, targe
     # Map timeframe strings to pandas frequency strings
     timeframe_map = {
         '1m': '1min', '3m': '3min', '5m': '5min', '15m': '15min', '30m': '30min',
-        '1h': '1H', '2h': '2H', '4h': '4H', '6h': '6H', '8h': '8H', '12h': '12H',
+        '1h': '1h', '2h': '2h', '4h': '4h', '6h': '6h', '8h': '8h', '12h': '12h',
         '1d': '1D', '3d': '3D', '1w': '1W', '1M': '1M'
     }
     
@@ -30,7 +30,7 @@ def resample_to_higher_timeframe(df: pd.DataFrame, current_timeframe: str, targe
         raise ValueError(f"Unsupported timeframe: {current_timeframe} or {target_timeframe}")
     
     # Convert to pandas frequency
-    freq = timeframe_map[target_timeframe]
+    freq = timeframe_map[target_timeframe]         
     
     # Resample OHLCV data
     resampled = df.resample(freq).agg({
