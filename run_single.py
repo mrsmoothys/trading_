@@ -16,6 +16,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import tensorflow as tf
 from feature_consistency import ensure_feature_consistency, ensure_sequence_dimensions
+from universal_model import UniversalModel  # Import the new universal model
 
 # Add parent directory to path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))

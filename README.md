@@ -479,3 +479,6 @@ python run_single.py --data-path /Users/mrsmoothy/Desktop/rsidtrade/binance_data
 python run_single.py --data-path /Users/mrsmoothy/Desktop/rsidtrade/binance_data_sets/BTCUSDT_1h_data_2021_to_2022.csv --visualize --feature-importance
 
 python optimize_features.py --data-path /Users/mrsmoothy/Desktop/rsidtrade/binance_data_sets/BTCUSDT_1h_data_2021_to_2022.csv --model-path /Users/mrsmoothy/Desktop/rsidtrade/trading_/models/BTCUSDT_1h/model_20250313_073330.h5 --population 15 --generations 8
+
+
+python run_single.py --data-path /Users/mrsmoothy/Desktop/rsidtrade/binance_data_sets/BTCUSDT_1h_data_2021_to_2022.csv --visualize
