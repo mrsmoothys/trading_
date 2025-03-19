@@ -79,7 +79,7 @@ LEARNING_RATE = 0.001
 
 # Optimization
 OPTIMIZATION_METRIC = "sharpe_ratio"  # Options: "sharpe_ratio", "sortino_ratio", "profit", "win_rate"
-OPTIMIZATION_TRIALS = 20
+OPTIMIZATION_TRIALS = 10
 CROSS_VALIDATION_FOLDS = 3
 
 # Stop loss/Take profit

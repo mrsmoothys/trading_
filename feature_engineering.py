@@ -67,37 +67,35 @@ def cached_generate_features(df: pd.DataFrame, feature_list: List[str],
 
 @numba.jit(nopython=True)
 def _calculate_patterns(open_values, high_values, low_values, close_values, length):
-        """Calculate candlestick patterns using JIT compilation for speed."""
-        # Pre-allocate arrays
-        doji = np.zeros(length)
-        hammer = np.zeros(length)
-        shooting_star = np.zeros(length)
+    """Calculate candlestick patterns using JIT compilation for speed."""
+    # Pre-allocate arrays
+    doji = np.zeros(length)
+    hammer = np.zeros(length)
+    shooting_star = np.zeros(length)
+    
+    for i in range(1, length):
+        # Calculate body and shadows
+        body = abs(close_values[i] - open_values[i])
+        upper_shadow = high_values[i] - max(close_values[i], open_values[i])
+        lower_shadow = min(close_values[i], open_values[i]) - low_values[i]
         
-        for i in range(1, length):
-            # Calculate body and shadows
-            body = abs(close_values[i] - open_values[i])
-            upper_shadow = high_values[i] - max(close_values[i], open_values[i])
-            lower_shadow = min(close_values[i], open_values[i]) - low_values[i]
-            
-            # Doji pattern
-            if body <= 0.1 * (high_values[i] - low_values[i]):
-                doji[i] = 1
-            
-            # Hammer pattern
-            if (body <= 0.3 * (high_values[i] - low_values[i]) and
-                lower_shadow >= 2 * body and 
-                upper_shadow <= 0.1 * body):
-                hammer[i] = 1
-            
-            # Shooting star pattern
-            if (body <= 0.3 * (high_values[i] - low_values[i]) and
-                upper_shadow >= 2 * body and 
-                lower_shadow <= 0.1 * body):
-                shooting_star[i] = 1
+        # Doji pattern
+        if body <= 0.1 * (high_values[i] - low_values[i]):
+            doji[i] = 1
         
-        return doji, hammer, shooting_star
-
-
+        # Hammer pattern
+        if (body <= 0.3 * (high_values[i] - low_values[i]) and
+            lower_shadow >= 2 * body and 
+            upper_shadow <= 0.1 * body):
+            hammer[i] = 1
+        
+        # Shooting star pattern
+        if (body <= 0.3 * (high_values[i] - low_values[i]) and
+            upper_shadow >= 2 * body and 
+            lower_shadow <= 0.1 * body):
+            shooting_star[i] = 1
+    
+    return doji, hammer, shooting_star
 
 class FeatureEngineer:
     """
@@ -271,8 +269,6 @@ class FeatureEngineer:
 
 
     def add_candlestick_patterns(self) -> None:
-        """Add candlestick pattern recognition."""
-        
         """Add candlestick patterns using JIT compilation."""
         # Extract numpy arrays for faster computation
         open_values = self.df['open'].values
@@ -283,7 +279,7 @@ class FeatureEngineer:
         
         # Calculate patterns using JIT-compiled function
         try:
-            doji, hammer, shooting_star, bullish_engulfing, bearish_engulfing = _calculate_patterns(
+            doji, hammer, shooting_star = _calculate_patterns(
                 open_values, high_values, low_values, close_values, length
             )
             
@@ -291,8 +287,19 @@ class FeatureEngineer:
             self.df['doji'] = doji
             self.df['hammer'] = hammer
             self.df['shooting_star'] = shooting_star
-            self.df['bullish_engulfing'] = bullish_engulfing
-            self.df['bearish_engulfing'] = bearish_engulfing
+            
+            # Calculate other patterns directly
+            # Bullish engulfing
+            self.df['bullish_engulfing'] = ((self.df['close'].shift(1) < self.df['open'].shift(1)) &  
+                                        (self.df['close'] > self.df['open']) &  
+                                        (self.df['open'] <= self.df['close'].shift(1)) &  
+                                        (self.df['close'] >= self.df['open'].shift(1))).astype(int)
+            
+            # Bearish engulfing
+            self.df['bearish_engulfing'] = ((self.df['close'].shift(1) > self.df['open'].shift(1)) &  
+                                        (self.df['close'] < self.df['open']) &  
+                                        (self.df['open'] >= self.df['close'].shift(1)) &  
+                                        (self.df['close'] <= self.df['open'].shift(1))).astype(int)
         except Exception as e:
             logger.error(f"Error calculating patterns: {e}")
             # Fall back to simple pattern calculation without numba
@@ -356,6 +363,10 @@ class FeatureEngineer:
         swing_high = np.zeros(len(high_values))
         swing_low = np.zeros(len(low_values))
         
+        # Dictionaries to store swing points with their values
+        self.swing_high_prices = {}
+        self.swing_low_prices = {}
+        
         # Generate boolean masks for conditions
         for i in range(window, len(high_values) - window):
             # Check if current high is greater than all window values before and after
@@ -368,6 +379,12 @@ class FeatureEngineer:
             
             swing_high[i] = 1 if is_swing_high else 0
             swing_low[i] = 1 if is_swing_low else 0
+            
+            # Store swing point values
+            if is_swing_high:
+                self.swing_high_prices[self.df.index[i]] = high_values[i]
+            if is_swing_low:
+                self.swing_low_prices[self.df.index[i]] = low_values[i]
         
         # Update DataFrame
         self.df['swing_high'] = swing_high
