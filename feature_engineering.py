@@ -787,6 +787,12 @@ def generate_features(df: pd.DataFrame, feature_list=None, n_jobs=4) -> pd.DataF
         'structure': ['swing_high', 'swing_low', 'consolidation', 'consolidation_strength', 
                     'donchian_middle', 'donchian_upper']
     }
+
+    # Use all features if none specified
+    if feature_list is None:
+        feature_list = []
+        for features in feature_groups.values():
+            feature_list.extend(features)
     
     # Create a copy of input data
     result_df = df.copy()

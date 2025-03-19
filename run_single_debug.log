@@ -1,0 +1,33 @@
+2025-03-19 08:21:34,518 - matplotlib - DEBUG - matplotlib data path: /Users/mrsmoothy/miniforge3/envs/rsidtrade_new/lib/python3.10/site-packages/matplotlib/mpl-data
+2025-03-19 08:21:34,522 - matplotlib - DEBUG - CONFIGDIR=/Users/mrsmoothy/.matplotlib
+2025-03-19 08:21:34,523 - matplotlib - DEBUG - interactive is False
+2025-03-19 08:21:34,523 - matplotlib - DEBUG - platform is darwin
+2025-03-19 08:21:34,560 - matplotlib - DEBUG - CACHEDIR=/Users/mrsmoothy/.matplotlib
+2025-03-19 08:21:34,563 - matplotlib.font_manager - DEBUG - Using fontManager instance from /Users/mrsmoothy/.matplotlib/fontlist-v390.json
+2025-03-19 08:21:36,924 - tensorflow - DEBUG - Falling back to TensorFlow client; we recommended you install the Cloud TPU client directly with pip install cloud-tpu-client.
+2025-03-19 08:21:37,222 - h5py._conv - DEBUG - Creating converter from 7 to 5
+2025-03-19 08:21:37,223 - h5py._conv - DEBUG - Creating converter from 5 to 7
+2025-03-19 08:21:37,223 - h5py._conv - DEBUG - Creating converter from 7 to 5
+2025-03-19 08:21:37,223 - h5py._conv - DEBUG - Creating converter from 5 to 7
+2025-03-19 08:21:56,455 - matplotlib - DEBUG - matplotlib data path: /Users/mrsmoothy/miniforge3/envs/rsidtrade_new/lib/python3.10/site-packages/matplotlib/mpl-data
+2025-03-19 08:21:56,460 - matplotlib - DEBUG - CONFIGDIR=/Users/mrsmoothy/.matplotlib
+2025-03-19 08:21:56,461 - matplotlib - DEBUG - interactive is False
+2025-03-19 08:21:56,461 - matplotlib - DEBUG - platform is darwin
+2025-03-19 08:21:56,497 - matplotlib - DEBUG - CACHEDIR=/Users/mrsmoothy/.matplotlib
+2025-03-19 08:21:56,500 - matplotlib.font_manager - DEBUG - Using fontManager instance from /Users/mrsmoothy/.matplotlib/fontlist-v390.json
+2025-03-19 08:21:58,778 - tensorflow - DEBUG - Falling back to TensorFlow client; we recommended you install the Cloud TPU client directly with pip install cloud-tpu-client.
+2025-03-19 08:21:59,001 - h5py._conv - DEBUG - Creating converter from 7 to 5
+2025-03-19 08:21:59,001 - h5py._conv - DEBUG - Creating converter from 5 to 7
+2025-03-19 08:21:59,001 - h5py._conv - DEBUG - Creating converter from 7 to 5
+2025-03-19 08:21:59,001 - h5py._conv - DEBUG - Creating converter from 5 to 7
+2025-03-19 08:23:11,652 - matplotlib - DEBUG - matplotlib data path: /Users/mrsmoothy/miniforge3/envs/rsidtrade_new/lib/python3.10/site-packages/matplotlib/mpl-data
+2025-03-19 08:23:11,657 - matplotlib - DEBUG - CONFIGDIR=/Users/mrsmoothy/.matplotlib
+2025-03-19 08:23:11,657 - matplotlib - DEBUG - interactive is False
+2025-03-19 08:23:11,657 - matplotlib - DEBUG - platform is darwin
+2025-03-19 08:23:11,703 - matplotlib - DEBUG - CACHEDIR=/Users/mrsmoothy/.matplotlib
+2025-03-19 08:23:11,706 - matplotlib.font_manager - DEBUG - Using fontManager instance from /Users/mrsmoothy/.matplotlib/fontlist-v390.json
+2025-03-19 08:23:14,118 - tensorflow - DEBUG - Falling back to TensorFlow client; we recommended you install the Cloud TPU client directly with pip install cloud-tpu-client.
+2025-03-19 08:23:14,361 - h5py._conv - DEBUG - Creating converter from 7 to 5
+2025-03-19 08:23:14,361 - h5py._conv - DEBUG - Creating converter from 5 to 7
+2025-03-19 08:23:14,362 - h5py._conv - DEBUG - Creating converter from 7 to 5
+2025-03-19 08:23:14,362 - h5py._conv - DEBUG - Creating converter from 5 to 7

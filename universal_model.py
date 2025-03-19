@@ -10,7 +10,11 @@ from typing import Dict, List, Tuple, Optional, Union, Any
 import numpy as np
 import pandas as pd
 import tensorflow as tf
-from tensorflow.keras.layers import Input, Dense, Concatenate, Embedding, Flatten
+# Add this with your other imports at the top
+from tensorflow.keras.layers import (
+    LSTM, BatchNormalization, Dropout, Input, Dense, 
+    Concatenate, Embedding, Flatten
+)
 from tensorflow.keras.models import Model
 
 from config import MODELS_DIR, LOOKBACK_WINDOW
@@ -85,27 +89,21 @@ class UniversalModel:
         
         # Symbol embedding input
         symbol_input = Input(shape=(1,), dtype='int32', name='symbol_input')
-        symbol_embedding = Embedding(input_dim=100, output_dim=8)(symbol_input)  # Allow up to 100 symbols
+        symbol_embedding = Embedding(input_dim=100, output_dim=8)(symbol_input)
         symbol_embedding = Flatten()(symbol_embedding)
         
         # Timeframe input (numeric)
         timeframe_input = Input(shape=(1,), name='timeframe_input')
         
-        # Process price sequence with DeepLearningModel's LSTM
-        base_model = DeepLearningModel(
-            input_shape=(self.lookback_window, self.feature_count),
-            output_dim=16,  # Intermediate representation
-            model_type='lstm',
-            hidden_layers=self.hidden_layers,
-            dropout_rate=self.dropout_rate,
-            learning_rate=self.learning_rate
-        )
-        
-        # Get the base model without its output layer
-        price_features = base_model.model.layers[-2].output
+        # Process price sequence directly with LSTM layers
+        x = price_input
+        for units in self.hidden_layers:
+            x = LSTM(units, return_sequences=(units != self.hidden_layers[-1]))(x)
+            x = BatchNormalization()(x)
+            x = Dropout(self.dropout_rate)(x)
         
         # Concatenate with symbol and timeframe information
-        combined = Concatenate()([price_features, symbol_embedding, timeframe_input])
+        combined = Concatenate()([x, symbol_embedding, timeframe_input])
         
         # Additional layers for combined processing
         x = Dense(64, activation='relu')(combined)
@@ -115,10 +113,7 @@ class UniversalModel:
         outputs = Dense(self.prediction_horizon, activation='linear')(x)
         
         # Create model
-        model = Model(
-            inputs=[price_input, symbol_input, timeframe_input],
-            outputs=outputs
-        )
+        model = Model(inputs=[price_input, symbol_input, timeframe_input], outputs=outputs)
         
         # Compile model
         model.compile(

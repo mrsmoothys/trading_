@@ -108,12 +108,12 @@ class DataFetcher:
         Returns:
             Path to saved file
         """
-        # Format dates for filename
-        start_str = start_date.replace('-', '')
-        end_str = end_date.replace('-', '')
+        # Extract just the years for the filename
+        start_year = datetime.strptime(start_date, '%Y-%m-%d').year
+        end_year = datetime.strptime(end_date, '%Y-%m-%d').year
         
         # Create filename
-        filename = f"{symbol}_{timeframe}_data_{start_str}_to_{end_str}.csv"
+        filename = f"{symbol}_{timeframe}_data_{start_year}_to_{end_year}.csv"
         filepath = os.path.join(self.data_dir, filename)
         
         # Save to CSV

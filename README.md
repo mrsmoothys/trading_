@@ -482,3 +482,6 @@ python optimize_features.py --data-path /Users/mrsmoothy/Desktop/rsidtrade/binan
 
 
 python run_single.py --data-path /Users/mrsmoothy/Desktop/rsidtrade/binance_data_sets/BTCUSDT_1h_data_2021_to_2022.csv --visualize
+
+
+python data_fetcher.py --symbols BTCUSDT --timeframes  5m 15m 1h 4h  --start-date 2021-01-01 --end-date 2022-12-31
