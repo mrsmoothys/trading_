@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 """
 Script for running the AI trading bot on a single dataset.
-Useful for quick optimization and detailed analysis.
+Now with universal model support.
 """
 import argparse
 import os
@@ -10,7 +10,6 @@ import json
 import time
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple, Union, Any
-from feature_engineering import apply_pca_reduction
 
 import pandas as pd
 import numpy as np
@@ -28,7 +27,7 @@ from config import (
     TRADING_FEE, SLIPPAGE, POSITION_SIZE, INITIAL_CAPITAL
 )
 from data_processor import load_data, prepare_multi_timeframe_data, create_training_sequences, train_val_test_split
-from feature_engineering import generate_features, FeatureEngineer
+from feature_engineering import generate_features, FeatureEngineer, apply_pca_reduction
 from model import DeepLearningModel
 from strategy import MLTradingStrategy, TradingStrategy
 from backtest import Backtester
@@ -38,10 +37,12 @@ from utils import (
     setup_logging, save_metadata, format_time, print_system_info,
     get_resource_usage, clear_keras_session
 )
+from universal_model import UniversalModel  # Import the new universal model
+
 
 def parse_args():
     """Parse command line arguments."""
-    parser = argparse.ArgumentParser(description='Run the AI trading bot on a single dataset.')
+    parser = argparse.ArgumentParser(description='Run the AI trading bot on a single dataset with universal model support.')
     
     # Dataset selection
     parser.add_argument('--data-path', type=str, required=True,
@@ -71,6 +72,12 @@ def parse_args():
                         help='Prediction horizon (default: from config)')
     parser.add_argument('--model-path', type=str,
                         help='Path to pre-trained model (skip training if provided)')
+    
+    # Universal model parameters - NEW
+    parser.add_argument('--universal-model', action='store_true',
+                        help='Use a universal model for all symbols and timeframes')
+    parser.add_argument('--universal-model-path', type=str,
+                        help='Path to pre-trained universal model')
     
     # Strategy params
     parser.add_argument('--initial-capital', type=float, default=INITIAL_CAPITAL,
@@ -744,63 +751,202 @@ def main():
         if args.end_date:
             data = data[data.index <= args.end_date]
         
-       # Generate features with PCA reduction
+        # Generate features with PCA reduction
         logger.info("Generating features with PCA dimensionality reduction")
-        n_components = 30  # Set the number of components to match model expectations
+        data, pca_model, scaler_model, feature_columns = prepare_and_process_features(data, n_components=30)
+        
+        # Universal Model approach
+        if args.universal_model:
+            logger.info("Using universal model approach")
             
-        # Pre-process all columns to ensure numeric types before PCA
-        for col in data.columns:
-            if col not in ['open', 'high', 'low', 'close', 'volume']:
+            # Create or load universal model
+            universal_model = None
+            if args.universal_model_path and os.path.exists(args.universal_model_path):
+                logger.info(f"Loading universal model from {args.universal_model_path}")
                 try:
-                    # If column is string type or has string values, convert to numeric
-                    if data[col].dtype == object or pd.api.types.is_string_dtype(data[col]):
-                        logger.warning(f"Converting string column to numeric: {col}")
-                        data[col] = pd.to_numeric(data[col], errors='coerce')
+                    universal_model = UniversalModel(model_path=args.universal_model_path)
                 except Exception as e:
-                    logger.warning(f"Could not process column {col}: {e}")
-                    # Remove problematic column as last resort
-                    data = data.drop(col, axis=1)
-
-        # Apply PCA with consistent feature count
-        try:
-            data, pca_model, scaler_model, feature_columns = prepare_and_process_features(data, n_components=30)
+                    logger.error(f"Error loading universal model: {e}")
+                    logger.info("Creating new universal model")
+                    universal_model = UniversalModel(
+                        lookback_window=args.lookback,
+                        prediction_horizon=args.horizon,
+                        feature_count=len(feature_columns)
+                    )
+            else:
+                # Look for an existing universal model
+                universal_model_dir = os.path.join(MODELS_DIR, 'universal_model')
+                if os.path.exists(universal_model_dir):
+                    # Find latest model
+                    universal_model_files = [f for f in os.listdir(universal_model_dir) 
+                                           if os.path.isdir(os.path.join(universal_model_dir, f)) and 
+                                           f.startswith('universal_model_')]
+                    if universal_model_files:
+                        # Get most recent model
+                        latest_model = sorted(universal_model_files)[-1]
+                        model_path = os.path.join(universal_model_dir, latest_model)
+                        logger.info(f"Found existing universal model: {model_path}")
+                        try:
+                            universal_model = UniversalModel(model_path=model_path)
+                        except Exception as e:
+                            logger.error(f"Error loading existing universal model: {e}")
+                            universal_model = None
+                
+                # Create new if none found or loading failed
+                if universal_model is None:
+                    logger.info("Creating new universal model")
+                    universal_model = UniversalModel(
+                        lookback_window=args.lookback,
+                        prediction_horizon=args.horizon,
+                        feature_count=len(feature_columns)
+                    )
             
-            # Ensure exactly 30 PCA components
-            data = ensure_feature_consistency(data, required_feature_count=30)
+            # Train universal model with current data
+            if not args.backtest_only:
+                logger.info(f"Training universal model on {symbol} {timeframe}")
+                history = universal_model.train(
+                    df=data,
+                    symbol=symbol,
+                    timeframe=timeframe,
+                    feature_columns=feature_columns,
+                    epochs=args.epochs,
+                    batch_size=args.batch_size,
+                    validation_split=0.2
+                )
+                
+                # Save trained model if requested
+                if args.save_model:
+                    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+                    save_dir = os.path.join(MODELS_DIR, 'universal_model', f"universal_model_{timestamp}")
+                    universal_model.save(save_dir)
+                    logger.info(f"Universal model saved to {save_dir}")
+                
+                # Display training summary
+                summary = universal_model.get_training_summary()
+                logger.info("Universal Model Training Summary:")
+                logger.info(f"Trained on symbols: {', '.join(summary['trained_symbols'])}")
+                for pair, metrics in summary['training_history'].items():
+                    if metrics['final_loss'] is not None:
+                        logger.info(f"{pair} - Loss: {metrics['final_loss']:.6f}, "
+                                   f"Val Loss: {metrics['final_val_loss']:.6f}, "
+                                   f"MAE: {metrics['final_mae']:.6f}")
             
-            # Define feature columns based on PCA components
-            feature_columns = [col for col in data.columns if col.startswith('pc_')]
-            logger.info(f"Using {len(feature_columns)} PCA components")
+            # Create a wrapper model for the strategy
+            # This adapts the universal model to work with the existing strategy class
+            class UniversalModelWrapper:
+                def __init__(self, universal_model, symbol, timeframe):
+                    self.universal_model = universal_model
+                    self.symbol = symbol
+                    self.timeframe = timeframe
+                
+                def predict(self, X, verbose=0):
+                    return self.universal_model.predict(X, self.symbol, self.timeframe)
             
-            # Save PCA and scaler models for consistency
-            import pickle
-            os.makedirs(os.path.join(MODELS_DIR, 'preprocessing'), exist_ok=True)
-            pca_path = os.path.join(MODELS_DIR, 'preprocessing', f"pca_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pkl")
-            scaler_path = os.path.join(MODELS_DIR, 'preprocessing', f"scaler_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pkl")
+            # Create wrapped model for strategy
+            model = UniversalModelWrapper(universal_model, symbol, timeframe)
             
-            with open(pca_path, 'wb') as f:
-                pickle.dump(pca_model, f)
+            # Create trading strategy
+            strategy = MLTradingStrategy(
+                symbol=symbol,
+                timeframe=timeframe,
+                model=model,
+                lookback_window=args.lookback,
+                prediction_horizon=args.horizon,
+                threshold=args.threshold,
+                position_size=args.position_size,
+                initial_capital=args.initial_capital,
+                trading_fee=args.fee,
+                slippage=args.slippage,
+                adaptive_sl_tp=True,
+                trailing_stop=True,
+                use_multi_timeframe=args.multi_timeframe,
+                multi_tf_weight=args.tf_weight
+            )
             
-            with open(scaler_path, 'wb') as f:
-                pickle.dump(scaler_model, f)
+            # Run backtest
+            logger.info("Running backtest with universal model")
+            strategy.set_data(data)
             
-            logger.info(f"PCA model saved to {pca_path}")
-            logger.info(f"Scaler model saved to {scaler_path}")
-        except Exception as e:
-            logger.error(f"Error in PCA reduction: {e}")
-            logger.info("Falling back to regular feature processing without PCA")
+            if args.detailed_backtest:
+                # Use function for detailed backtest
+                from run_detailed_backtest import run_detailed_backtest
+                backtest_results = run_detailed_backtest(strategy, data, args)
+            else:
+                backtest_results = strategy.backtest(data)
             
-            # Generate features without PCA
-            data = generate_features(data, apply_pca=False)
+            # Save results
+            results_path = os.path.join(args.results_dir, f"universal_model_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json")
             
-            # Get feature columns excluding OHLCV
-            feature_columns = [col for col in data.columns if col not in ['open', 'high', 'low', 'close', 'volume']]
+            # Prepare results for serialization
+            serializable_results = {
+                'performance': backtest_results['performance'],
+                'trades_count': len(backtest_results['trades']),
+                'config': {
+                    'symbol': symbol,
+                    'timeframe': timeframe,
+                    'universal_model': True,
+                    'lookback': args.lookback,
+                    'horizon': args.horizon,
+                    'threshold': args.threshold,
+                    'position_size': args.position_size,
+                    'initial_capital': args.initial_capital,
+                    'fee': args.fee,
+                    'slippage': args.slippage
+                }
+            }
             
-            # Ensure consistent feature count even without PCA
-            data = ensure_feature_consistency(data, required_feature_count=30)
-            feature_columns = [col for col in data.columns if col not in ['open', 'high', 'low', 'close', 'volume']]
-            logger.info(f"Using {len(feature_columns)} regular features")
-
+            # Add detailed results if available
+            if args.detailed_backtest:
+                if 'monthly_returns' in backtest_results:
+                    serializable_results['monthly_returns'] = backtest_results['monthly_returns']
+                if 'duration_stats' in backtest_results:
+                    serializable_results['duration_stats'] = backtest_results['duration_stats']
+                if 'side_stats' in backtest_results:
+                    serializable_results['side_stats'] = backtest_results['side_stats']
+                if 'reason_stats' in backtest_results:
+                    serializable_results['reason_stats'] = backtest_results['reason_stats']
+                if 'regime_stats' in backtest_results:
+                    serializable_results['regime_stats'] = backtest_results['regime_stats']
+                if 'streak_stats' in backtest_results:
+                    serializable_results['streak_stats'] = backtest_results['streak_stats']
+            
+            # Save results
+            with open(results_path, 'w') as f:
+                json.dump(serializable_results, f, indent=2)
+            
+            logger.info(f"Results saved to {results_path}")
+            
+            # Generate visualizations
+            if args.visualize:
+                logger.info("Generating visualizations")
+                
+                # Create visualizer
+                visualizer = Visualizer(result_dir=args.results_dir)
+                
+                # Generate dashboard
+                visualizer.generate_backtest_dashboard(
+                    backtest_results,
+                    title=f"{symbol} {timeframe} Universal Model Backtest Results"
+                )
+                
+                logger.info("Visualizations generated")
+            
+            # Print summary
+            logger.info("\nBacktest Summary (Universal Model):")
+            logger.info(f"Symbol: {symbol}")
+            logger.info(f"Timeframe: {timeframe}")
+            logger.info(f"Total Return: {backtest_results['performance']['total_return']:.2f}%")
+            logger.info(f"Number of Trades: {backtest_results['performance']['num_trades']}")
+            logger.info(f"Win Rate: {backtest_results['performance']['win_rate']:.2f}%")
+            logger.info(f"Profit Factor: {backtest_results['performance']['profit_factor']:.2f}")
+            logger.info(f"Sharpe Ratio: {backtest_results['performance']['sharpe_ratio']:.2f}")
+            logger.info(f"Max Drawdown: {backtest_results['performance']['max_drawdown']:.2f}%")
+            
+            logger.info("Universal model run completed successfully")
+            
+            return 0
+        
+        # === Traditional single-model approach (below) === #
         
         # Step 2: Split data for training and validation
         feature_columns = [col for col in data.columns if col not in ['open', 'high', 'low', 'close', 'volume']]
@@ -810,13 +956,14 @@ def main():
             if data[col].dtype == object or not pd.api.types.is_numeric_dtype(data[col]):
                 logger.warning(f"Converting non-numeric column {col} to numeric")
                 data[col] = pd.to_numeric(data[col], errors='coerce')
-           # FIXED: Ensure we use only the first 55 features to match model structure
+               
+        # Limit features if necessary
         max_features = 36
         if len(feature_columns) > max_features:
             logger.warning(f"Limiting feature count from {len(feature_columns)} to {max_features}")
             feature_columns = feature_columns[:max_features]
 
-        #Create sequences (this returns X with shape (num_samples, lookback_window, num_features))
+        # Create sequences
         X, y = create_training_sequences(
             data,
             lookback_window=args.lookback,
@@ -835,8 +982,10 @@ def main():
             X, y, train_size=args.train_size, val_size=args.val_size
         )
         
+        # Remaining traditional processing follows below...
         # Step 3: Cross-validation if requested
         if args.cross_validation:
+            from perform_cross_validation import perform_cross_validation
             cv_results = perform_cross_validation(
                 model_type=args.model_type,
                 X=X,
@@ -886,7 +1035,6 @@ def main():
                     feature_columns=feature_columns,
                     target_column='close',                    
                     normalize=True,
-
                 )
 
         else:
@@ -902,8 +1050,7 @@ def main():
             learning_rate = model_params.get('learning_rate', LEARNING_RATE)
             batch_size = model_params.get('batch_size', args.batch_size)
             
-
-             #Calculate the actual number of features being used
+            # Calculate the actual number of features being used
             feature_columns = [col for col in data.columns if col not in ['open', 'high', 'low', 'close', 'volume']]
             actual_feature_count = len(feature_columns)
             if actual_feature_count > 36:
@@ -911,7 +1058,7 @@ def main():
                 feature_columns = feature_columns[:36]
                 actual_feature_count = 36
 
-                        # Create sequences
+            # Create sequences
             X, y = create_training_sequences(
                 data,
                 lookback_window=args.lookback,
@@ -922,12 +1069,11 @@ def main():
             )
 
             # Ensure proper dimensions
-
             expected_shape = (None, args.lookback, 30)  # Fixed feature count
             X = ensure_sequence_dimensions(X, expected_shape)
 
             # Derive actual feature count from training data (ensuring consistency)
-            actual_feature_count = X.shape[2]  # This will be 36, matching your training inputs
+            actual_feature_count = X.shape[2]  # This will be 30, matching your training inputs
 
             # Create model
             model = DeepLearningModel(
@@ -938,59 +1084,61 @@ def main():
                 dropout_rate=DROPOUT_RATE,
                 learning_rate=LEARNING_RATE
             )
-            # Train model
-            logger.info("Training model")
             
-            # Create save path if needed
-            model_path = None
-            if args.save_model:
-                model_dir = os.path.join(MODELS_DIR, f"{symbol}_{timeframe}")
-                os.makedirs(model_dir, exist_ok=True)
-                model_path = os.path.join(model_dir, f"model_{datetime.now().strftime('%Y%m%d_%H%M%S')}.h5")
-            
-            # Train model
-            history = model.train(
-                X_train=X_train,
-                y_train=y_train,
-                X_val=X_val,
-                y_val=y_val,
-                epochs=args.epochs,
-                batch_size=batch_size,
-                save_path=model_path
-            )
+            # Train model if not backtest-only mode
+            if not args.backtest_only:
+                logger.info("Training model")
+                
+                # Create save path if needed
+                model_path = None
+                if args.save_model:
+                    model_dir = os.path.join(MODELS_DIR, f"{symbol}_{timeframe}")
+                    os.makedirs(model_dir, exist_ok=True)
+                    model_path = os.path.join(model_dir, f"model_{datetime.now().strftime('%Y%m%d_%H%M%S')}.h5")
+                
+                # Train model
+                history = model.train(
+                    X_train=X_train,
+                    y_train=y_train,
+                    X_val=X_val,
+                    y_val=y_val,
+                    epochs=args.epochs,
+                    batch_size=batch_size,
+                    save_path=model_path
+                )
 
-            # After saving the model
-            if model_path and args.save_model:
-                # Save PCA configuration
-                pca_config = {
-                    'n_components': 30,
-                    'pca_model_path': pca_path,
-                    'scaler_model_path': scaler_path
-                }
+                # After saving the model
+                if model_path and args.save_model:
+                    # Save PCA configuration
+                    pca_config = {
+                        'n_components': 30,
+                        'pca_model_path': pca_path if 'pca_path' in locals() else None,
+                        'scaler_model_path': scaler_path if 'scaler_path' in locals() else None
+                    }
 
-                # Save it alongside your model
-                pca_config_path = os.path.join(model_dir, 'pca_config.json')
-                with open(pca_config_path, 'w') as f:
-                    json.dump(pca_config, f, indent=2)
-                
-                logger.info(f"PCA configuration saved to {pca_config_path}")
+                    # Save it alongside your model
+                    pca_config_path = os.path.join(model_dir, 'pca_config.json')
+                    with open(pca_config_path, 'w') as f:
+                        json.dump(pca_config, f, indent=2)
+                    
+                    logger.info(f"PCA configuration saved to {pca_config_path}")
 
-            if model_path:
-                logger.info(f"Model saved to {model_path}")
-                
-                # Save PCA and scaler models
-                import pickle
-                pca_path = os.path.join(model_dir, f"pca_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pkl")
-                scaler_path = os.path.join(model_dir, f"scaler_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pkl")
-                
-                with open(pca_path, 'wb') as f:
-                    pickle.dump(pca_model, f)
-                
-                with open(scaler_path, 'wb') as f:
-                    pickle.dump(scaler_model, f)
-                
-                logger.info(f"PCA model saved to {pca_path}")
-                logger.info(f"Scaler model saved to {scaler_path}")
+                if model_path:
+                    logger.info(f"Model saved to {model_path}")
+                    
+                    # Save PCA and scaler models
+                    import pickle
+                    pca_path = os.path.join(model_dir, f"pca_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pkl")
+                    scaler_path = os.path.join(model_dir, f"scaler_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pkl")
+                    
+                    with open(pca_path, 'wb') as f:
+                        pickle.dump(pca_model, f)
+                    
+                    with open(scaler_path, 'wb') as f:
+                        pickle.dump(scaler_model, f)
+                    
+                    logger.info(f"PCA model saved to {pca_path}")
+                    logger.info(f"Scaler model saved to {scaler_path}")
         
         # Step 6: Analyze feature importance if requested
         if args.feature_importance:
@@ -1165,7 +1313,3 @@ def main():
         logger.debug(traceback.format_exc())
         
         return 1
-
-if __name__ == "__main__":
-    import logging
-    sys.exit(main())

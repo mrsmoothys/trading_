@@ -98,7 +98,7 @@ def load_data(file_path: Union[str, Path]) -> pd.DataFrame:
         df[col] = pd.to_numeric(df[col], errors='coerce')
     
     # Handle missing values
-    df = df.fill(method='ffill')
+    df = df.ffill()
     
     # Sort by timestamp
     df = df.sort_index()

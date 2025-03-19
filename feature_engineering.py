@@ -13,7 +13,7 @@ from statsmodels.nonparametric.kernel_regression import KernelReg
 from sklearn.decomposition import PCA
 from sklearn.preprocessing import StandardScaler
 import numba
-
+import concurrent.futures
 from config import FEATURE_SETS
 
 logger = logging.getLogger(__name__)
@@ -724,6 +724,51 @@ def apply_pca_reduction(data, n_components=30):
     
     return reduced_data, pca, scaler
 
+
+def _calculate_basic_features(df: pd.DataFrame) -> pd.DataFrame:
+    """Calculate basic features that are required by other calculations."""
+    # Create a copy to avoid modifying the original
+    result_df = df.copy()
+    
+    # Calculate basic moving averages that many features depend on
+    result_df['sma_5'] = result_df['close'].rolling(window=5).mean()
+    result_df['sma_20'] = result_df['close'].rolling(window=20).mean()
+    
+    # Calculate basic ATR for volatility features
+    high_low = result_df['high'] - result_df['low']
+    high_close = (result_df['high'] - result_df['close'].shift()).abs()
+    low_close = (result_df['low'] - result_df['close'].shift()).abs()
+    
+    ranges = pd.DataFrame({'hl': high_low, 'hc': high_close, 'lc': low_close})
+    true_range = ranges.max(axis=1)
+    result_df['atr'] = true_range.rolling(window=14).mean()
+    
+    # Calculate some basic price statistics
+    result_df['returns'] = result_df['close'].pct_change()
+    result_df['volatility'] = result_df['returns'].rolling(window=20).std()
+    
+    return result_df
+def _calculate_feature_group(df: pd.DataFrame, group: str, features: List[str]) -> pd.DataFrame:
+    """Calculate a group of related features."""
+    result_df = df.copy()
+    
+    # Create a FeatureEngineer instance
+    feature_engineer = FeatureEngineer(result_df)
+    
+    # Call the appropriate method based on group
+    if group == 'momentum':
+        feature_engineer.add_momentum_indicators()
+    elif group == 'volatility':
+        feature_engineer.add_volatility_indicators()
+    elif group == 'trend':
+        feature_engineer.add_trend_indicators()
+    elif group == 'patterns':
+        feature_engineer.add_candlestick_patterns()
+    elif group == 'structure':
+        feature_engineer.add_market_structure_features()
+    
+    # Return the DataFrame with added features
+    return feature_engineer.df
 
 def generate_features(df: pd.DataFrame, feature_list=None, n_jobs=4) -> pd.DataFrame:
     """Generate features using parallel processing."""
