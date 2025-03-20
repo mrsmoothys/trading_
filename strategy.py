@@ -239,7 +239,7 @@ class TradingStrategy:
         slippage: float = SLIPPAGE,
         adaptive_sl_tp: bool = ADAPTIVE_SL_TP,
         trailing_stop: bool = TRAILING_STOP,
-        expected_feature_count : int = 30,
+        expected_feature_count: int = 30,
     ):
         """
         Initialize the trading strategy.
@@ -269,7 +269,8 @@ class TradingStrategy:
         self.current_order = None
         self.orders = []
         self.trades = []
-        
+        self.positions = {}  # Add this line to fix the error
+
         # Performance tracking
         self.equity_curve = []
         self.drawdowns = []
@@ -354,8 +355,16 @@ class TradingStrategy:
         # Update equity curve
         self._update_equity()
     
-    def _update_equity(self) -> None:
-        """Update equity curve, drawdowns, and returns."""
+    # In strategy.py, TradingStrategy class
+
+    def _update_equity(self, timestamp=None, row=None) -> None:
+        """
+        Update equity curve, drawdowns, and returns.
+        
+        Args:
+            timestamp: Current timestamp (optional)
+            row: Current data row (optional)
+        """
         if self.position == Position.FLAT:
             current_equity = self.capital
         else:
@@ -867,6 +876,8 @@ class MLTradingStrategy(TradingStrategy):
         self.threshold = threshold
         self.use_multi_timeframe = use_multi_timeframe
         self.multi_tf_weight = multi_tf_weight
+        # Add this line in the __init__ method
+        self.positions = {}
         
         # Storage for multi-timeframe data
         self.multi_tf_data = {}
@@ -942,54 +953,77 @@ class MLTradingStrategy(TradingStrategy):
             logger.error(f"Error applying PCA transformation: {e}")
             # Continue with original data if transformation fails
     
+    # In strategy.py, MLTradingStrategy class
+
     def generate_signals(self) -> pd.DataFrame:
-        """
-        Generate trading signals with multi-timeframe confirmation.
-        """
-        # Generate signals for each timeframe
-        if self.use_multi_timeframe and len(self.multi_tf_data) > 1:
-            logger.info("Generating signals with multi-timeframe confirmation")
-            
-            # Process each timeframe
-            all_tf_signals = {}
-            for tf, tf_data in self.multi_tf_data.items():
-                # Generate signals for this timeframe
-                signals_tf = self._generate_signals_for_timeframe(tf_data)
-                all_tf_signals[tf] = signals_tf
-            
-            # Align all signals to base timeframe
-            aligned_signals = align_timeframes_to_base(all_tf_signals, self.timeframe)
-            
-            # Combine signals with weighted approach
-            base_signals = all_tf_signals[self.timeframe]
-            
-            # Add columns for each timeframe's signals
-            for tf, signals_series in aligned_signals.items():
-                if tf != self.timeframe:
-                    base_signals[f'signal_{tf}'] = signals_series
-            
-            # Create weighted signal using all timeframes
-            base_weight = 1.0 - self.multi_tf_weight
-            higher_weights = self.multi_tf_weight / (len(aligned_signals) - 1) if len(aligned_signals) > 1 else 0
-            
-            # Calculate combined signal
-            base_signals['combined_signal'] = base_signals['signal'] * base_weight
-            
-            for tf, signals_series in aligned_signals.items():
-                if tf != self.timeframe:
-                    base_signals['combined_signal'] += signals_series * higher_weights
-            
-            # Discretize combined signal
-            base_signals['signal'] = np.where(
-                base_signals['combined_signal'] >= 0.5, 1,
-                np.where(base_signals['combined_signal'] <= -0.5, -1, 0)
-            )
-            
-            return base_signals
+        """Generate trading signals with optimized batch processing."""
+        import time
         
-        else:
-            # Fall back to single timeframe
-            return self._generate_signals_for_timeframe(self.data)
+        if self.data is None:
+            raise ValueError("Data not set. Call set_data() first.")
+        
+        # Add signal column
+        signals = self.data.copy()
+        signals['signal'] = 0
+        
+        # Get feature columns
+        pca_cols = [col for col in signals.columns if col.startswith('pc_')]
+        using_pca = len(pca_cols) > 0
+        
+        # Define feature columns based on what's available
+        feature_columns = pca_cols if using_pca else [
+            col for col in signals.columns 
+            if col not in ['open', 'high', 'low', 'close', 'volume', 'signal']
+        ]
+        
+        # Add timing and progress indicators
+        start_time = time.time()
+        logger = logging.getLogger(__name__)
+        logger.info(f"Starting signal generation for {len(signals)} candles with {len(feature_columns)} features")
+        
+        # Process in batches
+        batch_size = 500  # Adjust based on memory availability
+        num_samples = len(signals) - self.lookback_window
+        
+        for batch_start in range(0, num_samples, batch_size):
+            batch_end = min(batch_start + batch_size, num_samples)
+            logger.info(f"Processing batch {batch_start}-{batch_end} of {num_samples}")
+            
+            # Create batch input
+            batch_X = []
+            for i in range(batch_start, batch_end):
+                idx = i + self.lookback_window
+                window_data = signals[feature_columns].iloc[idx-self.lookback_window:idx].values
+                
+                # Normalize data
+                mean = np.mean(window_data, axis=0)
+                std = np.std(window_data, axis=0)
+                std = np.where(std == 0, 1e-8, std)
+                window_data_norm = (window_data - mean) / std
+                
+                batch_X.append(window_data_norm)
+            
+            # Convert to numpy array
+            batch_X = np.array(batch_X)
+            
+            # Make batch predictions
+            batch_preds = self.model.predict(batch_X, verbose=0)
+            
+            # Process predictions
+            for i, pred in enumerate(batch_preds):
+                idx = batch_start + i + self.lookback_window
+                current_price = signals['close'].iloc[idx]
+                predicted_price = pred[-1]
+                predicted_return = (predicted_price / current_price) - 1
+                
+                # Set signal based on predicted return
+                if predicted_return > self.threshold:
+                    signals.loc[signals.index[idx], 'signal'] = 1
+                elif predicted_return < -self.threshold:
+                    signals.loc[signals.index[idx], 'signal'] = -1
+        
+        logger.info(f"Signal generation completed in {time.time() - start_time:.2f} seconds")
+        return signals
         
 
 
@@ -1002,7 +1036,8 @@ class MLTradingStrategy(TradingStrategy):
             current_time: Current timestamp
             current_price: Current price
         """
-        if not self.positions:
+        if not hasattr(self, 'positions') or not self.positions:
+            self.positions = {}
             return
         
         positions_to_close = []

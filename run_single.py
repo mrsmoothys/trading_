@@ -759,6 +759,23 @@ def prepare_and_process_features(data, n_components=30, force_pca=True):
     return processed_data, pca_model, scaler_model, feature_columns
 
 
+class UniversalModelWrapper:
+    def __init__(self, universal_model, symbol, timeframe):
+        self.universal_model = universal_model
+        self.symbol = symbol
+        self.timeframe = timeframe
+        
+    def predict(self, X, verbose=0):
+        # Add batching support
+        if len(X.shape) == 3:  # Already batched
+            return self.universal_model.predict(X, self.symbol, self.timeframe, verbose=verbose)
+        elif len(X.shape) == 2:  # Single sample, add batch dimension
+            X_batched = np.expand_dims(X, axis=0)
+            return self.universal_model.predict(X_batched, self.symbol, self.timeframe, verbose=verbose)[0]
+        else:
+            raise ValueError(f"Unexpected input shape: {X.shape}")
+
+
 
 def main():
     """Main function."""
