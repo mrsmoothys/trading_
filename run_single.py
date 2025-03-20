@@ -10,6 +10,8 @@ import argparse
 import numpy as np
 import pandas as pd
 import tensorflow as tf
+tf.config.run_functions_eagerly(True)
+tf.data.experimental.enable_debug_mode()  # This addresses the tf.data warnings
 from datetime import datetime
 import json
 import traceback
@@ -171,6 +173,8 @@ def parse_args():
                    help='Use multi-timeframe signal confirmation')
     parser.add_argument('--tf-weight', type=float, default=0.5,
                    help='Weight for higher timeframe signals (default: 0.5)')
+    parser.add_argument("--progress-bar", action="store_true", 
+                        help="Show progress bar during backtesting")
     
     return parser.parse_args()
 
@@ -488,8 +492,7 @@ def run_detailed_backtest(
 
     
     # Run standard backtest
-    backtest_results = strategy.backtest(data)
-    
+    backtest_results = strategy.backtest(backtest_data, progress_bar=args.progress_bar)    
     # Add additional analytics
     
     # 1. Monthly performance
@@ -808,7 +811,7 @@ def main():
         data, pca_model, scaler_model, feature_columns = prepare_and_process_features(data, n_components=30)
         
         # Universal Model approach
-        if args.universal_model:
+        if args.universal_model or args.universal_model_path:
             logger.info("Using universal model approach")
             
             # Create or load universal model

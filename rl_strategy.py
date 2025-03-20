@@ -688,104 +688,69 @@ class RLTradingStrategy(TradingStrategy):
         
         return agent
     
-    def train(self, data: pd.DataFrame, episodes: int = 10) -> List[Dict[str, float]]:
-        """
-        Train the RL agent.
+    def train(self, df, symbol, timeframe, feature_columns, epochs=10, batch_size=32, validation_split=0.2, apply_pca=True):
+        """Train the model on data for a specific symbol and timeframe."""
+        logger.info(f"Training universal model on {symbol} {timeframe}")
         
-        Args:
-            data: DataFrame with market data
-            episodes: Number of training episodes
-            
-        Returns:
-            Training history
-        """
-        # Create environment
-        self.env = self._create_env(data)
+        # Prepare data
+        X, symbol_ids, timeframe_values = self.prepare_data(
+            df=df,
+            symbol=symbol,
+            timeframe=timeframe,
+            feature_columns=feature_columns,
+            apply_pca=apply_pca
+        )
         
-        # Create agent if not provided
-        if self.agent is None:
-            self.agent = self._create_agent(
-                state_dim=self.env.state_dim,
-                action_dim=self.env.action_space.n
+        # Get the target values (future price changes)
+        y = df['close'].pct_change(periods=self.prediction_horizon).shift(-self.prediction_horizon).values
+        y = y[self.lookback_window:].reshape(-1, 1)  # Start from lookback_window to match X
+        
+        # Remove NaN values
+        valid_indices = ~np.isnan(y).any(axis=1)
+        X = X[valid_indices]
+        y = y[valid_indices]
+        symbol_ids = symbol_ids[valid_indices]
+        timeframe_values = timeframe_values[valid_indices]
+        
+        # Train/validation split
+        split_idx = int(len(X) * (1 - validation_split))
+        X_train, X_val = X[:split_idx], X[split_idx:]
+        y_train, y_val = y[:split_idx], y[split_idx:]
+        symbol_ids_train, symbol_ids_val = symbol_ids[:split_idx], symbol_ids[split_idx:]
+        timeframe_values_train, timeframe_values_val = timeframe_values[:split_idx], timeframe_values[split_idx:]
+        
+        # Update training summary
+        if symbol not in self.training_summary['trained_symbols']:
+            self.training_summary['trained_symbols'].append(symbol)
+        
+        # Train model
+        try:
+            history = self.model.fit(
+                [X_train, symbol_ids_train, timeframe_values_train],
+                y_train,
+                epochs=epochs,
+                batch_size=batch_size,
+                validation_data=([X_val, symbol_ids_val, timeframe_values_val], y_val),
+                callbacks=[
+                    tf.keras.callbacks.EarlyStopping(patience=5, restore_best_weights=True)
+                ],
+                verbose=1
             )
-        
-        # Set training mode
-        self.train_mode = True
-        self.episodes = episodes
-        
-        # Training history
-        self.training_history = []
-
-        # Add this safety check to ensure logger is initialized
-        if not hasattr(self, 'logger'):
-            self.logger = logging.getLogger("rl_strategy")
-        
-        self.logger.info(f"Starting RL training for {self.symbol} {self.timeframe} with {episodes} episodes")
-        
-        # Train for specified number of episodes
-        for episode in range(episodes):
-            # Reset environment
-            state = self.env.reset()
-            done = False
-            total_reward = 0
-            step_count = 0
-            losses = []
             
-            # Run episode
-            while not done:
-                # Choose action
-                action = self.agent.choose_action(state, training=True)
-                
-                # Take action
-                next_state, reward, done, info = self.env.step(action)
-                
-                # Store experience
-                self.agent.remember(state, action, reward, next_state, done)
-                
-                # Train at regular intervals
-                if step_count % self.train_interval == 0:
-                    loss = self.agent.replay()
-                    if loss > 0:
-                        losses.append(loss)
-                
-                # Update state
-                state = next_state
-                total_reward += reward
-                step_count += 1
-            
-            # Calculate performance
-            final_equity = self.env.equity_curve[-1]
-            returns = self.env.returns
-            mean_return = np.mean(returns) if returns else 0
-            std_return = np.std(returns) if returns else 0
-            sharpe = mean_return / std_return if std_return > 0 else 0
-            
-            # Track training progress
-            episode_summary = {
-                'episode': episode + 1,
-                'total_reward': total_reward,
-                'mean_loss': np.mean(losses) if losses else 0,
-                'steps': step_count,
-                'final_equity': final_equity,
-                'return': (final_equity / self.env.initial_balance - 1) * 100,
-                'mean_step_return': mean_return * 100,
-                'sharpe': sharpe * np.sqrt(252),  # Annualized Sharpe ratio
-                'epsilon': self.agent.epsilon
+            # Update training metrics
+            key = f"{symbol}_{timeframe}"
+            self.training_summary['training_history'][key] = {
+                'final_loss': float(history.history['loss'][-1]) if 'loss' in history.history else None,
+                'final_val_loss': float(history.history['val_loss'][-1]) if 'val_loss' in history.history else None,
+                'final_mae': float(history.history['mae'][-1]) if 'mae' in history.history else None,
+                'epochs_trained': len(history.history['loss']) if 'loss' in history.history else 0
             }
             
-            self.training_history.append(episode_summary)
+            return history
             
-            # Log progress
-            self.logger.info(
-                f"Episode {episode+1}/{episodes}: "
-                f"Return: {episode_summary['return']:.2f}%, "
-                f"Reward: {total_reward:.2f}, "
-                f"Sharpe: {episode_summary['sharpe']:.2f}, "
-                f"Epsilon: {self.agent.epsilon:.4f}"
-            )
-        
-        self.logger.info(f"Training completed for {self.symbol} {self.timeframe}")
-        return self.training_history
+        except Exception as e:
+            logger.error(f"Error training on {symbol} {timeframe}: {str(e)}")
+            return None
     
     def generate_signals(self) -> pd.DataFrame:
         """

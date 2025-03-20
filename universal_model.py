@@ -10,13 +10,13 @@ from typing import Dict, List, Tuple, Optional, Union, Any
 import numpy as np
 import pandas as pd
 import tensorflow as tf
+tf.config.run_functions_eagerly(True)  # Enable eager execution
 # Add this with your other imports at the top
 from tensorflow.keras.layers import (
     LSTM, BatchNormalization, Dropout, Input, Dense, 
     Concatenate, Embedding, Flatten
 )
 from tensorflow.keras.models import Model
-
 from config import MODELS_DIR, LOOKBACK_WINDOW
 from model import DeepLearningModel
 from data_processor import load_data, create_training_sequences
@@ -280,32 +280,22 @@ class UniversalModel:
         
         return history.history
     
-    def predict(
-        self,
-        X: np.ndarray,
-        symbol: str,
-        timeframe: str
-    ) -> np.ndarray:
-        """
-        Make predictions with the universal model.
+    def predict(self, X, symbol, timeframe, verbose=0):
+        """Generate predictions for input data from a specific symbol and timeframe."""
+        # Ensure X is the right shape for the model
+        if len(X.shape) == 2:  # (samples, features)
+            X = X.reshape(-1, self.lookback_window, self.feature_count)
         
-        Args:
-            X: Input price features with shape (samples, lookback_window, feature_count)
-            symbol: Trading symbol
-            timeframe: Trading timeframe
-            
-        Returns:
-            Predicted values
-        """
-        # Create symbol and timeframe inputs
+        # Create symbol IDs array
         symbol_id = self._get_symbol_id(symbol)
-        timeframe_minutes = self._get_timeframe_minutes(timeframe)
+        symbol_ids = np.ones((X.shape[0], 1), dtype=np.int32) * symbol_id
         
-        X_symbol = np.full((len(X), 1), symbol_id, dtype=np.int32)
-        X_timeframe = np.full((len(X), 1), timeframe_minutes, dtype=np.float32)
+        # Create timeframe values array
+        timeframe_value = self._get_timeframe_minutes(timeframe)
+        timeframe_values = np.ones((X.shape[0], 1), dtype=np.float32) * timeframe_value
         
-        # Make predictions
-        return self.model.predict([X, X_symbol, X_timeframe])
+        # Generate predictions
+        return self.model.predict([X, symbol_ids, timeframe_values], verbose=verbose)
     
     def save(self, path: Optional[str] = None) -> str:
         """

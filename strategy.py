@@ -6,6 +6,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Dict, List, Optional, Tuple, Union, Any
 from multi_timeframe_utils import create_multi_timeframe_data, align_timeframes_to_base
+import tqdm
 
 
 import numpy as np
@@ -306,6 +307,28 @@ class TradingStrategy:
         self.current_index = 0
         self.current_timestamp = self.data.index[0]
         self.current_price = self.data['close'].iloc[0]
+
+    def reset_backtest(self):
+        """Reset all backtest state variables to initial values."""
+        # Reset position tracking
+        self.position = Position.FLAT
+        self.current_order = None
+        self.orders = []
+        self.trades = []
+        
+        # Reset performance tracking
+        self.capital = self.initial_capital
+        self.equity_curve = [self.initial_capital]
+        self.drawdowns = [0.0]
+        self.returns = [0.0]
+        
+        # Reset market state
+        if self.data is not None and len(self.data) > 0:
+            self.current_index = 0
+            self.current_timestamp = self.data.index[0]
+            self.current_price = self.data['close'].iloc[0]
+        
+        logger.info("Backtest state reset")
     
     def update_state(self, index: int) -> None:
         """
@@ -684,54 +707,57 @@ class TradingStrategy:
         
         return signals
     
-    def backtest(self, data: pd.DataFrame) -> Dict[str, Any]:
-        """
-        Run a backtest on the given data.
+    import tqdm
+
+    def backtest(self, data, progress_bar=True):
+        """Run a backtest with the given data and return performance metrics.
         
         Args:
-            data: Market data as pandas DataFrame
+            data (pd.DataFrame): The data to backtest on
+            progress_bar (bool): Whether to show a progress bar
             
         Returns:
-            Dictionary of backtest results
+            dict: A dictionary of performance metrics
         """
-        # Set data and reset state
-        self.set_data(data)
+        self.data = data
+        self.reset_backtest()
         
-        # Generate signals
+        # Generate signals first
         signals = self.generate_signals()
         
-        # Run through data
-        for i in range(1, len(signals)):
-            # Update state
-            self.update_state(i)
-            
-            # Check for trade signals
-            signal = signals['signal'].iloc[i]
-            
-            if signal == 1 and self.position == Position.FLAT:
-                # Buy signal, open long position
-                self._open_position(Position.LONG, "SIGNAL")
-            elif signal == -1 and self.position == Position.FLAT:
-                # Sell signal, open short position
-                self._open_position(Position.SHORT, "SIGNAL")
-            elif signal == 0 and self.position != Position.FLAT:
-                # Neutral signal, close position
-                self._close_position("SIGNAL")
+        # Create progress bar if enabled
+        if progress_bar:
+            pbar = tqdm.tqdm(total=len(data), 
+                            desc="Backtesting", 
+                            bar_format="{l_bar}{bar:30}{r_bar}",
+                            ncols=100)
         
-        # Close any remaining positions at the end
-        if self.position != Position.FLAT:
-            self._close_position("END_OF_DATA")
+        # Run backtest
+        for i, (timestamp, row) in enumerate(data.iterrows()):
+            # Update positions with current price
+            self._update_positions(timestamp, row)
+            
+            # Process signals if any
+            if i in signals:
+                signal = signals[i]
+                self._process_signal(timestamp, row, signal)
+            
+            # Update equity curve
+            self._update_equity(timestamp, row)
+            
+            # Update progress bar
+            if progress_bar:
+                # Update progress bar with stats
+                pbar.set_postfix(equity=f"${self.equity:.2f}", 
+                            trades=len(self.trades),
+                            active=len(self.active_positions))
+                pbar.update(1)
+        
+        if progress_bar:
+            pbar.close()
         
         # Calculate performance metrics
-        performance = self.calculate_performance()
-        
-        return {
-            "signals": signals,
-            "trades": self.trades,
-            "orders": [order.to_dict() for order in self.orders],
-            "equity_curve": self.equity_curve,
-            "performance": performance
-        }
+        return self._calculate_performance()
     
     def calculate_performance(self) -> Dict[str, Any]:
         """
@@ -964,6 +990,76 @@ class MLTradingStrategy(TradingStrategy):
         else:
             # Fall back to single timeframe
             return self._generate_signals_for_timeframe(self.data)
+        
+
+
+    def _update_positions(self, current_time, current_price):
+        """
+        Update the status of all open positions based on current price.
+        This method checks for stop-loss, take-profit, and trailing stop conditions.
+        
+        Args:
+            current_time: Current timestamp
+            current_price: Current price
+        """
+        if not self.positions:
+            return
+        
+        positions_to_close = []
+        
+        for position_id, position in self.positions.items():
+            # Skip already closed positions (should not be in self.positions anyway)
+            if position['status'] != 'open':
+                continue
+            
+            # Calculate current P&L
+            if position['side'] == 'long':
+                profit_pct = (current_price - position['entry_price']) / position['entry_price'] * 100
+            else:  # short
+                profit_pct = (position['entry_price'] - current_price) / position['entry_price'] * 100
+            
+            position['current_price'] = current_price
+            position['current_profit_pct'] = profit_pct
+            position['current_profit'] = position['size'] * profit_pct / 100
+            
+            # Update trailing stop if enabled and in profit
+            if self.trailing_stop and profit_pct > 0:
+                # For longs, move stop loss up as price increases
+                if position['side'] == 'long':
+                    new_stop = current_price * (1 - self.trailing_stop_pct/100)
+                    if new_stop > position['stop_loss'] and new_stop < current_price:
+                        position['stop_loss'] = new_stop
+                # For shorts, move stop loss down as price decreases
+                else:
+                    new_stop = current_price * (1 + self.trailing_stop_pct/100)
+                    if new_stop < position['stop_loss'] and new_stop > current_price:
+                        position['stop_loss'] = new_stop
+            
+            # Check if stop loss hit
+            if (position['side'] == 'long' and current_price <= position['stop_loss']) or \
+            (position['side'] == 'short' and current_price >= position['stop_loss']):
+                position['exit_price'] = current_price
+                position['exit_time'] = current_time
+                position['status'] = 'closed'
+                position['exit_reason'] = 'stop_loss'
+                positions_to_close.append(position_id)
+                continue
+            
+            # Check if take profit hit
+            if (position['side'] == 'long' and current_price >= position['take_profit']) or \
+            (position['side'] == 'short' and current_price <= position['take_profit']):
+                position['exit_price'] = current_price
+                position['exit_time'] = current_time
+                position['status'] = 'closed'
+                position['exit_reason'] = 'take_profit'
+                positions_to_close.append(position_id)
+                continue
+        
+        # Close positions and update portfolio
+        for position_id in positions_to_close:
+            position = self.positions[position_id]
+            self._close_position(position)
+            del self.positions[position_id]
     
     def _generate_signals_for_timeframe(self, data: pd.DataFrame) -> pd.DataFrame:
         """
